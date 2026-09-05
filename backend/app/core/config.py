@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parents[2] / '.env', extra='ignore'
     )
+    inference_model_id: str | None = Field(default=None, min_length=1)
+    inference_model_revision: str | None = Field(default=None, min_length=1)
+    task_lease_seconds: int = Field(default=300, ge=30, le=3600)
     database_url: SecretStr | None = None
     api_token: SecretStr | None = None
     cors_origins: list[str] = ['http://localhost:5173', 'http://127.0.0.1:5173']
@@ -16,6 +19,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode='after')
     def validate_timeout(self):
+        if bool(self.inference_model_id) != bool(self.inference_model_revision):
+            raise ValueError('Set both inference model ID and revision, or neither')
         if self.worker_timeout_seconds <= self.heartbeat_interval_seconds:
             raise ValueError('Worker timeout must be longer than the heartbeat interval')
         if self.api_token is not None and not self.api_token.get_secret_value():

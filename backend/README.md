@@ -2,7 +2,7 @@
 
 Owner: Abel. The coordinator runs on Abel's laptop for the demo. It manages worker presence, jobs, task assignment, retries and results. Kevin's worker performs inference; Ronald's frontend calls this HTTP API. Neither teammate needs the database password.
 
-## Current implementation (v0.1)
+## Current implementation (v0.3)
 
 Implemented:
 
@@ -10,13 +10,16 @@ Implemented:
 - Environment configuration and bounded PostgreSQL connection pooling.
 - Versioned Alembic migration for `coordinator.workers`.
 - Worker registration, paginated listing and heartbeat updates.
+- Atomic job creation with 25-input task chunks and preserved input indexes.
+- Job lookup and paginated listing with task counts and progress.
+- Worker task pull with database row locking, one active assignment per worker, model matching and retry-safe assignment responses.
 - `AVAILABLE`, `BUSY`, `OFFLINE` presence derived from heartbeat age.
 - Optional shared demo bearer token and configured CORS origins.
 - Liveness and database readiness endpoints; read-only connection check.
 
-Not implemented yet: jobs, task assignment, leases, retries, results, stats and inference. The proposed interfaces below are for coordination; they currently return 404. No model or model revision has been chosen yet.
+Not implemented yet: lease renewal/recovery, completion/failure endpoints, results, stats and inference. Worker registration/heartbeat/pull and job endpoints are implemented. Completion/failure/result interfaces are marked as planned and currently return 404. No model or model revision has been chosen yet.
 
-Database verification: unit/API checks pass locally. The PostgreSQL integration test is included but requires a disposable migrated database. This version has not been applied to or verified against the shared Supabase project.
+Database verification (2026-09-05): the worker migration is applied to the shared Supabase project. SELECT 1, readiness, registration, persistence across app restarts/new connection pools, heartbeat BUSY/AVAILABLE transitions, and enabled worker-table RLS were verified. The separate disposable-database integration test remains available. A simulated worker named Abel-Persistence-Test was retained and will become OFFLINE when its heartbeats stop.
 
 ## Run on Abel's laptop
 
@@ -83,7 +86,7 @@ Register after the worker is ready. Each successful request creates a new worker
 }
 ```
 
-`model_id` and `model_revision` are optional until we agree on the model. Scheduling will require them when implemented. `benchmark_score` defaults to 1 and is currently informational.
+`model_id` and `model_revision` are optional for registration, but required before receiving assignments. `benchmark_score` defaults to 1 and is currently informational.
 
 Response: **201 Created**.
 
@@ -115,13 +118,13 @@ Status is computed when read, so dashboard polling does not write to the databas
 
 ## Frontend integration — Ronald
 
-Start with `/health`, `/ready` and `GET /api/workers`. Polling workers every second is fine for the demo. Use the exact property names above (`ram_gb`, `benchmark_score`, etc.). Display connection errors separately from an empty worker list.
+Start with `/health`, `/ready`, `GET /api/workers`, `POST /api/jobs`, `GET /api/jobs` and `GET /api/jobs/{job_id}`. Polling workers every second is fine for the demo. Use the exact property names above (`ram_gb`, `benchmark_score`, etc.). Display connection errors separately from an empty worker list.
 
 When configured, send the shared demo token in the Authorization header. Do not put a database password or Supabase service-role key in frontend code. The shared demo token is visible to the browser user; this MVP assumes trusted teammates.
 
-## Proposed job/task API — not implemented
+## Job API — implemented; task execution API — planned
 
-These paths and examples are the agreed direction for the next slice. Kevin still needs to confirm the model ID, pinned revision, token limit and truncation behavior. All workers must run the same model/revision. CPU execution is required; GPU use is optional.
+Job submission, listing and lookup are implemented. Task execution examples remain the proposed contract for the next slice. Kevin still needs to confirm the model ID, pinned revision, token limit and truncation behavior. All workers must run the same model/revision. CPU execution is required; GPU use is optional.
 
 ### POST /api/jobs
 
@@ -133,9 +136,43 @@ These paths and examples are the agreed direction for the next slice. Kevin stil
 }
 ```
 
-Plan: reject empty input lists and unsupported task types/optimization values; create the job and its tasks atomically. Start with 25 inputs per task. `fastest` means eligible workers pull the oldest queued task; no benchmark optimizer is promised.
+Implemented: reject empty/blank inputs and unsupported task types/optimization values with 422; create the job and its tasks atomically. Each task contains at most 25 inputs. Limits: 1–1,000 inputs, at most 10,000 characters each, and at most 1,000,000 combined UTF-8 text bytes. Original text and indexes are preserved.
 
-### POST /api/workers/{worker_id}/next-task
+Response: **201 Created** with a `Location: /api/jobs/<uuid>` header:
+
+```json
+{"job_id":"<uuid>","status":"QUEUED","total_inputs":100,"total_tasks":4}
+```
+
+Each POST creates a new job. Submission idempotency is not implemented, so do not automatically retry an ambiguous submission without checking the job list.
+
+### GET /api/jobs and GET /api/jobs/{job_id}
+
+List returns a JSON array, newest first, with `limit` (default 100, maximum 500) and `offset` (default 0). Lookup returns one object; a missing UUID returns 404 and malformed UUID returns 422. Both require the same configured demo token as workers.
+
+```json
+{
+  "id":"<uuid>",
+  "task_type":"sentiment-classification",
+  "optimization":"fastest",
+  "status":"QUEUED",
+  "total_inputs":100,
+  "total_tasks":4,
+  "completed_tasks":0,
+  "failed_tasks":0,
+  "progress_percentage":0.0,
+  "created_at":"2026-09-05T20:00:00Z",
+  "started_at":null,
+  "completed_at":null
+}
+```
+
+`progress_percentage` is 0–100, calculated from successfully completed tasks. It may be below 100 for a final failed job; use status to determine finality. Jobs move to RUNNING on their first assignment. Completion is not implemented yet. No raw input text is returned by these dashboard reads.
+
+### Task scheduling behavior
+ `fastest` means eligible workers pull the oldest queued task; no benchmark optimizer is promised.
+
+### POST /api/workers/{worker_id}/next-task — implemented
 
 ```json
 {
@@ -152,11 +189,15 @@ Plan: reject empty input lists and unsupported task types/optimization values; c
 }
 ```
 
-No work returns `{"task":null}`. Poll only while idle, with a short delay when no work is available. The backend will enforce one active assignment per worker and select eligible tasks with a database transaction and `FOR UPDATE SKIP LOCKED`.
+No work returns `{"task":null}`. Poll only while idle, with a short delay when no work is available. The backend enforces one active assignment per worker and selects eligible tasks with a database transaction and `FOR UPDATE SKIP LOCKED`.
 
-Indexes refer to positions in the original job. Each assignment receives a new ID. Lease duration and the heartbeat fields for renewing a specific assignment will be finalized before scheduling is implemented. Do not assume worker presence alone renews every task indefinitely.
+Indexes refer to positions in the original job. Each assignment receives a new ID. `TASK_LEASE_SECONDS` defaults to 300 (allowed 30–3600). Retrying the pull while an assignment is live returns the same task, assignment ID and expiry without consuming another attempt. Treat that as the same work; do not launch duplicate inference. Heartbeat does not extend this lease yet. An expired assignment returns 409; automatic recovery and completion are the next milestone, so end-to-end execution is not ready yet.
 
-### POST /api/tasks/{task_id}/complete
+Unknown worker → 404. Offline worker → 409 (send a heartbeat first). Missing loaded-model registration → 409. Missing coordinator model configuration → 503. No compatible work, or a worker reporting busy without a recorded assignment → `{"task":null}`. A recorded active assignment takes precedence over stale heartbeat `active_tasks` values.
+
+Configure `INFERENCE_MODEL_ID` and `INFERENCE_MODEL_REVISION` together in `.env` **before creating execution jobs**. The backend snapshots those values onto each new job and returns them in job reads. Both are intentionally unset until Kevin confirms the model. Jobs submitted without a model remain visible but unschedulable; submit a new job after configuration rather than silently changing old jobs. Workers receive only jobs matching their loaded model/revision and supported task type. Changing configuration does not change existing job pins.
+
+### POST /api/tasks/{task_id}/complete — planned
 
 ```json
 {
@@ -171,7 +212,7 @@ Labels are `POSITIVE` or `NEGATIVE`; score is the model score for that label in 
 
 The planned completion transaction validates the current assignment, inserts a unique result per task and updates job progress atomically. Retrying an accepted completion is safe; expired/superseded assignments return 409. Workers must not report inference failure merely because a completion upload timed out: retry the same completion first.
 
-### POST /api/tasks/{task_id}/fail
+### POST /api/tasks/{task_id}/fail — planned
 
 ```json
 {
@@ -185,8 +226,6 @@ A chunk succeeds or fails as a whole. Maximum three assignments per task; increm
 
 ### Planned frontend reads
 
-- `GET /api/jobs`: recent jobs.
-- `GET /api/jobs/{job_id}`: task counts, progress, timestamps and status.
 - `GET /api/jobs/{job_id}/results`: ordered successful predictions, original indexes and failed-task details.
 - `GET /api/stats`: dashboard counts, after the core lifecycle works.
 
@@ -221,4 +260,26 @@ Primary files:
 - `app/services/worker_service.py`: registration and presence logic.
 - `migrations/`: reproducible schema history.
 
-Work on `abel-backend`, make focused commits and coordinate changes to the API examples before Kevin or Ronald depends on them. Next milestone: verify this slice against Supabase, then implement job creation and the task lifecycle with concurrent-claim and stale-assignment tests.
+Work on `abel-backend`, make focused commits and coordinate changes to the API examples before Kevin or Ronald depends on them. Next milestone: task completion, failure reporting and lease recovery, with stale-assignment and idempotency tests.
+
+
+## Job milestone verification (2026-09-05)
+
+Migration `1781ed678f6b` adds `coordinator.jobs` and `coordinator.tasks`, including foreign keys, uniqueness/check constraints, indexes and RLS. `task_results` is not created yet. Assignment IDs and lease fields are populated by the task pull endpoint.
+
+Automated PostgreSQL tests in `tests/test_jobs_postgres.py` create a uniquely named temporary schema and roll back all changes, leaving application rows untouched. They verify the exact migration SQL, real API creation/read behavior, chunk ordering, pagination, constraints, RLS and atomic rollback after an injected task-insert failure. Run them with a configured `TEST_DATABASE_URL`:
+
+```bash
+python -m pytest tests/test_jobs_postgres.py -q
+```
+
+A live coordinator-schema smoke test also verified 100 inputs → four queued tasks, reads across a new app/connection pool and RLS. The synthetic job and its tasks were removed afterward. Credentials remain in the ignored local `.env`.
+
+
+## Assignment verification
+
+`tests/test_scheduler_postgres.py` uses independent PostgreSQL connections and uniquely named temporary schemas, cleaned up afterward. It exercises simultaneous pulls for one task, duplicate pulls from the same worker, two workers claiming distinct tasks, model filtering, empty queues, offline workers and expired assignments. Never run it with another scheduler pointed at its generated test schema.
+
+Migration `9e9ad9dc65c4` adds model pins to jobs and a partial unique index preventing more than one ASSIGNED/RUNNING task per worker. Existing jobs are not assigned an invented model. `task_results` remains pending.
+
+Verification: 25 unit/API tests and eight PostgreSQL tests passed for this milestone. A live HTTP smoke test confirmed assignment, repeat-pull stability and the job RUNNING transition; synthetic data was removed.

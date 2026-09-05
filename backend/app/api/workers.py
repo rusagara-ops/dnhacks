@@ -8,6 +8,8 @@ from app.db.database import get_db
 from app.models import Worker
 from app.schemas.worker import HeartbeatRequest, HeartbeatResponse, WorkerRegisterRequest, WorkerRegisterResponse, WorkerResponse
 from app.services import worker_service
+from app.schemas.task import NextTaskResponse
+from app.services.scheduler import get_next_task
 
 router = APIRouter(prefix='/workers', tags=['workers'])
 logger = logging.getLogger(__name__)
@@ -35,3 +37,8 @@ def heartbeat(worker_id: UUID, payload: HeartbeatRequest, db: Session = Depends(
     worker.last_heartbeat = func.clock_timestamp()
     db.commit()
     return HeartbeatResponse()
+
+
+@router.post('/{worker_id}/next-task', response_model=NextTaskResponse)
+def next_task(worker_id: UUID, request: Request, db: Session = Depends(get_db)):
+    return get_next_task(db, worker_id, request.app.state.settings)
