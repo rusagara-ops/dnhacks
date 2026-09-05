@@ -16,6 +16,8 @@ class Job(Base):
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     task_type: Mapped[str] = mapped_column(Text)
+    model_id: Mapped[str | None] = mapped_column(Text)
+    model_revision: Mapped[str | None] = mapped_column(Text)
     optimization: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, default='QUEUED', server_default='QUEUED')
     total_inputs: Mapped[int] = mapped_column(Integer)

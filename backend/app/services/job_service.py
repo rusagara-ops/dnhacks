@@ -13,10 +13,10 @@ def split_into_tasks(inputs):
         }}
 
 
-def create_job(db, payload):
+def create_job(db, payload, model_id=None, model_revision=None):
     # The job and every chunk must become visible together, or not at all.
     with db.begin():
-        job = Job(task_type=payload.task_type, optimization=payload.optimization,
+        job = Job(model_id=model_id, model_revision=model_revision, task_type=payload.task_type, optimization=payload.optimization,
                   total_inputs=len(payload.inputs), total_tasks=(len(payload.inputs) + CHUNK_SIZE - 1) // CHUNK_SIZE)
         db.add(job)
         db.flush()

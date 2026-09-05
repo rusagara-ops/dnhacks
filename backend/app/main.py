@@ -41,7 +41,7 @@ def create_app(settings: Settings | None = None):
             if engine:
                 engine.dispose()
 
-    app = FastAPI(title='DNhacks Coordinator', version='0.2.0', lifespan=lifespan)
+    app = FastAPI(title='DNhacks Coordinator', version='0.3.0', lifespan=lifespan)
     app.state.settings = settings
     app.state.sessions = None
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
@@ -66,7 +66,7 @@ def create_app(settings: Settings | None = None):
         with app.state.sessions() as db:
             db.execute(text('SELECT 1'))
             db.execute(text('SELECT id FROM coordinator.workers LIMIT 0'))
-            db.execute(text('SELECT id FROM coordinator.jobs LIMIT 0'))
+            db.execute(text('SELECT id, model_id, model_revision FROM coordinator.jobs LIMIT 0'))
             db.execute(text('SELECT id FROM coordinator.tasks LIMIT 0'))
         return {'status': 'ok', 'database': 'ok'}
 

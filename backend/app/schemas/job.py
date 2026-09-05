@@ -28,6 +28,8 @@ class JobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     task_type: str
+    model_id: str | None
+    model_revision: str | None
     optimization: str
     status: Literal['QUEUED', 'RUNNING', 'COMPLETED', 'FAILED']
     total_inputs: int

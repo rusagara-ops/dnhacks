@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Text, UniqueConstraint, func
+from sqlalchemy import Index, CheckConstraint, DateTime, ForeignKey, Integer, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.database import Base
@@ -14,6 +14,7 @@ class Task(Base):
         CheckConstraint('start_index >= 0 AND input_count BETWEEN 1 AND 25', name='task_chunk_valid'),
         CheckConstraint('attempt_count BETWEEN 0 AND 3', name='task_attempts_valid'),
         UniqueConstraint('job_id', 'start_index', name='task_job_start_unique'),
+        Index('uq_tasks_active_worker', 'assigned_worker_id', unique=True, postgresql_where=text("status IN ('ASSIGNED','RUNNING')")),
         {'schema': 'coordinator'},
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
