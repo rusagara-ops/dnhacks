@@ -16,7 +16,7 @@ Implemented:
 
 Not implemented yet: jobs, task assignment, leases, retries, results, stats and inference. The proposed interfaces below are for coordination; they currently return 404. No model or model revision has been chosen yet.
 
-Database verification: unit/API checks pass locally. The PostgreSQL integration test is included but requires a disposable migrated database. This version has not been applied to or verified against the shared Supabase project.
+Database verification (2026-09-05): the worker migration is applied to the shared Supabase project. SELECT 1, readiness, registration, persistence across app restarts/new connection pools, heartbeat BUSY/AVAILABLE transitions, and enabled worker-table RLS were verified. The separate disposable-database integration test remains available. A simulated worker named Abel-Persistence-Test was retained and will become OFFLINE when its heartbeats stop.
 
 ## Run on Abel's laptop
 
@@ -221,4 +221,4 @@ Primary files:
 - `app/services/worker_service.py`: registration and presence logic.
 - `migrations/`: reproducible schema history.
 
-Work on `abel-backend`, make focused commits and coordinate changes to the API examples before Kevin or Ronald depends on them. Next milestone: verify this slice against Supabase, then implement job creation and the task lifecycle with concurrent-claim and stale-assignment tests.
+Work on `abel-backend`, make focused commits and coordinate changes to the API examples before Kevin or Ronald depends on them. Next milestone: implement job creation and the task lifecycle with concurrent-claim and stale-assignment tests.
