@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Name = Annotated[str, Field(min_length=1, max_length=200)]
 Percent = Annotated[float, Field(ge=0, le=100, allow_inf_nan=False)]
@@ -33,6 +33,17 @@ class WorkerRegisterResponse(BaseModel):
 
 
 class HeartbeatRequest(InputModel):
+    task_id: UUID | None = None
+    assignment_id: UUID | None = None
+
+    @model_validator(mode='after')
+    def assignment_pair(self):
+        if bool(self.task_id) != bool(self.assignment_id):
+            raise ValueError('Send both task_id and assignment_id')
+        if self.task_id and self.active_tasks != 1:
+            raise ValueError('An assignment heartbeat requires active_tasks=1')
+        return self
+
     cpu_utilization: Percent
     memory_utilization: Percent
     active_tasks: int = Field(ge=0, le=1)
@@ -40,6 +51,7 @@ class HeartbeatRequest(InputModel):
 
 class HeartbeatResponse(BaseModel):
     status: Literal['ok'] = 'ok'
+    lease_expires_at: datetime | None = None
 
 
 class WorkerResponse(WorkerRegisterRequest):

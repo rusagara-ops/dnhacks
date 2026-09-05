@@ -4,6 +4,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from sqlalchemy import select, func, update
 
+from app.services.recovery import recover_expired
 from app.models import Job, Task, Worker
 from app.schemas.task import NextTaskResponse, TaskAssignment
 
@@ -18,6 +19,7 @@ def assignment_response(task, job):
 
 
 def get_next_task(db, worker_id, settings):
+    recover_expired(db, settings)
     with db.begin():
         # Lock worker first everywhere that modifies assignment ownership.
         worker = db.scalar(select(Worker).where(Worker.id == worker_id).with_for_update())
@@ -31,7 +33,7 @@ def get_next_task(db, worker_id, settings):
         ).with_for_update())
         if active:
             if active.lease_expires_at is None or active.lease_expires_at <= now:
-                raise HTTPException(409, 'Assignment expired; recovery is not implemented yet')
+                raise HTTPException(409, 'Assignment expired; retry after recovery')
             # A lost HTTP response can be retried without consuming another attempt.
             return assignment_response(active, db.get(Job, active.job_id))
         if not settings.inference_model_id or not settings.inference_model_revision:
@@ -49,6 +51,7 @@ def get_next_task(db, worker_id, settings):
             .with_for_update(skip_locked=True, of=Task).limit(1))
         if task is None:
             return NextTaskResponse(task=None)
+        task.started_at = now
         task.status = 'ASSIGNED'
         task.assigned_worker_id = worker_id
         task.assignment_id = uuid4()

@@ -2,7 +2,7 @@
 
 Owner: Abel. The coordinator runs on Abel's laptop for the demo. It manages worker presence, jobs, task assignment, retries and results. Kevin's worker performs inference; Ronald's frontend calls this HTTP API. Neither teammate needs the database password.
 
-## Current implementation (v0.3)
+## Current implementation (v0.5)
 
 Implemented:
 
@@ -17,7 +17,7 @@ Implemented:
 - Optional shared demo bearer token and configured CORS origins.
 - Liveness and database readiness endpoints; read-only connection check.
 
-Not implemented yet: lease renewal/recovery, completion/failure endpoints, results, stats and inference. Worker registration/heartbeat/pull and job endpoints are implemented. Completion/failure/result interfaces are marked as planned and currently return 404. No model or model revision has been chosen yet.
+Implemented in v0.4: completion/failure endpoints, result storage, assignment-specific lease renewal, offline/expired-task recovery, and partial job results. Implemented in v0.5: dashboard stats and an HTTP-only simulated worker. Real inference integration remains pending. Worker registration/heartbeat/pull and job endpoints are implemented. Completion, failure, job result and stats interfaces are implemented. No model or model revision has been chosen yet.
 
 Database verification (2026-09-05): the worker migration is applied to the shared Supabase project. SELECT 1, readiness, registration, persistence across app restarts/new connection pools, heartbeat BUSY/AVAILABLE transitions, and enabled worker-table RLS were verified. The separate disposable-database integration test remains available. A simulated worker named Abel-Persistence-Test was retained and will become OFFLINE when its heartbeats stop.
 
@@ -52,7 +52,7 @@ The migration creates the private `coordinator` schema. Run migrations and the d
 
 No schema changes happen automatically on API startup. Keep future schema changes in Alembic migrations. Do not use `create_all()` to update a shared database.
 
-Open http://127.0.0.1:8000/docs. Use **Authorize** to enter the demo token when configured. `/health` indicates the process is alive. `/ready` also checks the database connection and worker table. A missing connection or migration returns 503, not a false readiness success.
+Open http://127.0.0.1:8000/docs. Use **Authorize** to enter the demo token when configured. `/health` indicates the process is alive. `/ready` also checks the database connection and all coordinator tables. A missing connection or migration returns 503, not a false readiness success.
 
 For the two-laptop demo, after localhost works:
 
@@ -102,7 +102,13 @@ Response: **201 Created**.
 
 Response: **200 OK**, `{"status":"ok"}`. An unknown worker returns 404. `active_tasks` must be 0 or 1 for the MVP.
 
-Continue sending heartbeats independently of the inference loop. A fresh heartbeat restores an offline worker's presence. This currently reports presence only: task recovery and lease renewal are not implemented.
+Continue sending heartbeats independently of the inference loop. A fresh heartbeat restores an offline worker's presence. When idle, use the simple heartbeat above. While executing, send `task_id` and `assignment_id` with `active_tasks: 1`:
+
+```json
+{"cpu_utilization":35.2,"memory_utilization":41.0,"active_tasks":1,"task_id":"<uuid>","assignment_id":"<uuid>"}
+```
+
+The response includes `lease_expires_at`. Both IDs are required together. An assignment heartbeat renews only the current unexpired lease and moves the task to RUNNING. A stale assignment returns 409. Stop submitting results for a rejected assignment and resume idle heartbeats/polling. Ordinary heartbeats update presence but do not renew a task lease.
 
 ### GET /api/workers?limit=100&offset=0
 
@@ -122,9 +128,9 @@ Start with `/health`, `/ready`, `GET /api/workers`, `POST /api/jobs`, `GET /api/
 
 When configured, send the shared demo token in the Authorization header. Do not put a database password or Supabase service-role key in frontend code. The shared demo token is visible to the browser user; this MVP assumes trusted teammates.
 
-## Job API — implemented; task execution API — planned
+## Job and task API — implemented
 
-Job submission, listing and lookup are implemented. Task execution examples remain the proposed contract for the next slice. Kevin still needs to confirm the model ID, pinned revision, token limit and truncation behavior. All workers must run the same model/revision. CPU execution is required; GPU use is optional.
+Job submission, listing, lookup, task assignment, completion, failure and results are implemented. Kevin still needs to confirm the model ID, pinned revision, token limit and truncation behavior. All workers must run the same model/revision. CPU execution is required; GPU use is optional.
 
 ### POST /api/jobs
 
@@ -167,7 +173,7 @@ List returns a JSON array, newest first, with `limit` (default 100, maximum 500)
 }
 ```
 
-`progress_percentage` is 0–100, calculated from successfully completed tasks. It may be below 100 for a final failed job; use status to determine finality. Jobs move to RUNNING on their first assignment. Completion is not implemented yet. No raw input text is returned by these dashboard reads.
+`progress_percentage` is 0–100, calculated from successfully completed tasks. It may be below 100 for a final failed job; use status to determine finality. Jobs move to RUNNING on their first assignment. Jobs become terminal once every task completes or permanently fails. No raw input text is returned by these dashboard reads.
 
 ### Task scheduling behavior
  `fastest` means eligible workers pull the oldest queued task; no benchmark optimizer is promised.
@@ -191,13 +197,13 @@ List returns a JSON array, newest first, with `limit` (default 100, maximum 500)
 
 No work returns `{"task":null}`. Poll only while idle, with a short delay when no work is available. The backend enforces one active assignment per worker and selects eligible tasks with a database transaction and `FOR UPDATE SKIP LOCKED`.
 
-Indexes refer to positions in the original job. Each assignment receives a new ID. `TASK_LEASE_SECONDS` defaults to 300 (allowed 30–3600). Retrying the pull while an assignment is live returns the same task, assignment ID and expiry without consuming another attempt. Treat that as the same work; do not launch duplicate inference. Heartbeat does not extend this lease yet. An expired assignment returns 409; automatic recovery and completion are the next milestone, so end-to-end execution is not ready yet.
+Indexes refer to positions in the original job. Each assignment receives a new ID. `TASK_LEASE_SECONDS` defaults to 300 (allowed 30–3600). Retrying the pull while an assignment is live returns the same task, assignment ID and expiry without consuming another attempt. Treat that as the same work; do not launch duplicate inference. Heartbeat with the matching task/assignment IDs extends the lease up to the maximum runtime. Expired or offline-worker assignments are recovered before task pulls and by a periodic loop (default every five seconds). A maximum of three assignments is allowed; attempts increment only on assignment. Two backend instances can safely run recovery concurrently.
 
 Unknown worker → 404. Offline worker → 409 (send a heartbeat first). Missing loaded-model registration → 409. Missing coordinator model configuration → 503. No compatible work, or a worker reporting busy without a recorded assignment → `{"task":null}`. A recorded active assignment takes precedence over stale heartbeat `active_tasks` values.
 
 Configure `INFERENCE_MODEL_ID` and `INFERENCE_MODEL_REVISION` together in `.env` **before creating execution jobs**. The backend snapshots those values onto each new job and returns them in job reads. Both are intentionally unset until Kevin confirms the model. Jobs submitted without a model remain visible but unschedulable; submit a new job after configuration rather than silently changing old jobs. Workers receive only jobs matching their loaded model/revision and supported task type. Changing configuration does not change existing job pins.
 
-### POST /api/tasks/{task_id}/complete — planned
+### POST /api/tasks/{task_id}/complete — implemented
 
 ```json
 {
@@ -210,9 +216,9 @@ Configure `INFERENCE_MODEL_ID` and `INFERENCE_MODEL_REVISION` together in `.env`
 
 Labels are `POSITIVE` or `NEGATIVE`; score is the model score for that label in [0, 1]. Return exactly one result per assigned index. Execution time includes preprocessing and inference, excluding model loading and network calls.
 
-The planned completion transaction validates the current assignment, inserts a unique result per task and updates job progress atomically. Retrying an accepted completion is safe; expired/superseded assignments return 409. Workers must not report inference failure merely because a completion upload timed out: retry the same completion first.
+The completion transaction validates the current assignment, inserts a unique result per task and updates job progress atomically. Retrying an accepted completion is safe; expired/superseded assignments return 409. Workers must not report inference failure merely because a completion upload timed out: retry the same completion first.
 
-### POST /api/tasks/{task_id}/fail — planned
+### POST /api/tasks/{task_id}/fail — implemented
 
 ```json
 {
@@ -224,10 +230,11 @@ The planned completion transaction validates the current assignment, inserts a u
 
 A chunk succeeds or fails as a whole. Maximum three assignments per task; increment attempts only upon assignment, never again on timeout. Old assignments cannot fail a newly assigned task.
 
-### Planned frontend reads
+### GET /api/jobs/{job_id}/results — implemented
 
-- `GET /api/jobs/{job_id}/results`: ordered successful predictions, original indexes and failed-task details.
-- `GET /api/stats`: dashboard counts, after the core lifecycle works.
+Returns `job_id`, `status`, `is_final`, `total_inputs`, `completed_inputs`, `failed_inputs`, ordered `results` (`index`, `label`, `score`), and `failed_tasks` (`task_id`, `input_start_index`, `input_count`, `error_code`). Partial results are available while processing. Predictions remain in original input order even when tasks finish out of order.
+
+`GET /api/stats` is implemented; see the dashboard statistics section below.
 
 Job statuses: `QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`.
 
@@ -260,12 +267,12 @@ Primary files:
 - `app/services/worker_service.py`: registration and presence logic.
 - `migrations/`: reproducible schema history.
 
-Work on `abel-backend`, make focused commits and coordinate changes to the API examples before Kevin or Ronald depends on them. Next milestone: task completion, failure reporting and lease recovery, with stale-assignment and idempotency tests.
+Work on `abel-backend`, make focused commits and coordinate changes to the API examples before Kevin or Ronald depends on them. Next milestone: Kevin confirms model ID/revision and we run his real worker on two laptops; Ronald can integrate the implemented result endpoints.
 
 
 ## Job milestone verification (2026-09-05)
 
-Migration `1781ed678f6b` adds `coordinator.jobs` and `coordinator.tasks`, including foreign keys, uniqueness/check constraints, indexes and RLS. `task_results` is not created yet. Assignment IDs and lease fields are populated by the task pull endpoint.
+Migration `1781ed678f6b` adds `coordinator.jobs` and `coordinator.tasks`, including foreign keys, uniqueness/check constraints, indexes and RLS. `task_results` was added in v0.4. Assignment IDs and lease fields are populated by the task pull endpoint.
 
 Automated PostgreSQL tests in `tests/test_jobs_postgres.py` create a uniquely named temporary schema and roll back all changes, leaving application rows untouched. They verify the exact migration SQL, real API creation/read behavior, chunk ordering, pagination, constraints, RLS and atomic rollback after an injected task-insert failure. Run them with a configured `TEST_DATABASE_URL`:
 
@@ -280,6 +287,97 @@ A live coordinator-schema smoke test also verified 100 inputs → four queued ta
 
 `tests/test_scheduler_postgres.py` uses independent PostgreSQL connections and uniquely named temporary schemas, cleaned up afterward. It exercises simultaneous pulls for one task, duplicate pulls from the same worker, two workers claiming distinct tasks, model filtering, empty queues, offline workers and expired assignments. Never run it with another scheduler pointed at its generated test schema.
 
-Migration `9e9ad9dc65c4` adds model pins to jobs and a partial unique index preventing more than one ASSIGNED/RUNNING task per worker. Existing jobs are not assigned an invented model. `task_results` remains pending.
+Migration `9e9ad9dc65c4` adds model pins to jobs and a partial unique index preventing more than one ASSIGNED/RUNNING task per worker. Existing jobs are not assigned an invented model. `coordinator.task_results` is now added by migration `7e2242ffb4de`. Its task ID is the primary key, enforcing one accepted result per task.
 
 Verification: 25 unit/API tests and eight PostgreSQL tests passed for this milestone. A live HTTP smoke test confirmed assignment, repeat-pull stability and the job RUNNING transition; synthetic data was removed.
+
+
+## Completion and recovery details (v0.4)
+
+Completion returns `{"status":"completed"}`; a repeated completion for the same accepted assignment returns `{"status":"already_completed"}`. The first accepted result wins. Exactly one valid prediction per assigned index is required; missing/duplicate/foreign indexes return 422. Model labels must be POSITIVE/NEGATIVE and scores finite in [0,1]. A result, task state and job counter are committed in one transaction.
+
+Failure returns `requeued` or `failed`; retrying the most recently recorded failure returns `already_failed`. Superseded assignment reports cannot modify newer work. Recovery follows the same retry limit as explicit failure. It releases worker capacity, clears assignment ownership, and either requeues work or marks it permanently failed. The job continues other tasks and finishes FAILED with successful partial results when any task permanently fails.
+
+`RECOVERY_INTERVAL_SECONDS` defaults to 5. `TASK_MAX_RUNTIME_SECONDS` defaults to 1800 and must be at least TASK_LEASE_SECONDS (default 300). Renewal never extends an assignment beyond its maximum runtime. These are per-assignment limits, reset on retry. Old worker registrations remain visible as OFFLINE.
+
+The periodic recovery loop runs with the API process and stops on shutdown. Pull requests also recover expired work. No Redis or separate scheduler process is required. API request handlers use a consistent worker → task → job write-lock order. Readiness now checks the result table as well.
+
+No `/start` call is required: assignment is ASSIGNED, and an assignment-specific heartbeat marks it RUNNING. A worker can also complete an ASSIGNED task directly if it finishes before the next heartbeat.
+
+Lifecycle verification: 48 automated checks passed across unit/API validation and isolated PostgreSQL tests. A live HTTP test also passed completion, duplicate completion, lease renewal, periodic background recovery, retry exhaustion, ordered partial FAILED results, persistence across app restarts, and result-table RLS. Only synthetic verification rows were removed afterward. Real model execution on two laptops remains to be tested.
+
+
+## Dashboard statistics — Ronald
+
+`GET /api/stats` requires the configured bearer token and returns one consistent database snapshot:
+
+```json
+{
+  "workers_online": 2,
+  "workers_available": 1,
+  "workers_busy": 1,
+  "jobs_queued": 0,
+  "jobs_running": 1,
+  "jobs_completed": 2,
+  "jobs_failed": 0,
+  "tasks_completed": 8,
+  "total_inferences": 200
+}
+```
+
+Worker counts exclude timed-out registrations. AVAILABLE/BUSY use the heartbeat-reported active-task count, matching the worker-list API. `total_inferences` counts accepted input predictions, not task attempts, model loads, retries or failed inputs. Simulated predictions count too; this is not a measure of verified real model execution. Job/task counters cover the whole repository database, including any retained demo jobs. Empty databases return zeros. Poll once per second for the demo.
+
+## Simulated worker — test without Kevin
+
+This script generates deterministic fake predictions (alternating labels by input index, score 0.5). It is not sentiment inference. Its fixed model is `simulation/sentiment`, revision `v1`, so it cannot claim jobs pinned to a real model.
+
+Install the backend development dependencies, then start a simulation coordinator from `backend/`:
+
+```bash
+source .venv/bin/activate
+INFERENCE_MODEL_ID=simulation/sentiment INFERENCE_MODEL_REVISION=v1 uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+These command-scoped settings do not edit `.env`. The coordinator uses the configured database and creates persistent demo data. Stop any existing server on port 8000 first. Old jobs without these exact model pins are not eligible.
+
+In each worker terminal, from `backend/`:
+
+```bash
+source .venv/bin/activate
+export API_TOKEN='<same demo token configured for the backend>'
+python -m scripts.simulated_worker --name Simulator-A --max-tasks 100 --delay 2
+```
+
+Start a second terminal with `--name Simulator-B`. The worker reads only the API_TOKEN environment variable; it does not require a database password or Supabase credentials. `httpx` is included in `requirements-dev.txt`.
+
+Create a job using `/docs` (Authorize with the same demo token), or:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/jobs   -H "Authorization: Bearer $API_TOKEN"   -H 'Content-Type: application/json'   -d '{"task_type":"sentiment-classification","inputs":["demo input one","demo input two"],"optimization":"fastest"}'
+```
+
+For both workers to participate, submit more than 25 inputs so there is more than one task. A two-input example creates just one task. Use the returned job ID with `GET /api/jobs/{id}/results` and observe `/api/stats`.
+
+The simulator sends independent heartbeats during its delay, includes assignment IDs for renewal, retries ambiguous result uploads with the same payload, and discards results after a stale-assignment response. It exits after 30 seconds with no work by default; increase `--idle-timeout` if preparing a demo slowly. `--max-tasks` bounds the number of claims processed by that process. A repeated assignment response must never trigger parallel execution of the same task.
+
+### Recovery demonstration
+
+1. Create a simulation job with one task.
+2. Run `python -m scripts.simulated_worker --name Crash-Test --crash-after-claim`.
+3. It exits with code 17 after claiming, without sending a result or more heartbeats.
+4. Run `python -m scripts.simulated_worker --name Survivor --max-tasks 1 --idle-timeout 60`.
+5. After the configured worker timeout (default 15 seconds) and recovery interval, Survivor receives the work and finishes it.
+
+To exercise explicit failures, use `--fail-tasks --max-tasks 3` on a new one-task simulation job. Three failed assignments exhaust retries and produce FAILED with no predictions. No database edits are needed for either demonstration.
+
+For another laptop, run the coordinator with `--host 0.0.0.0` and pass `--url http://<ABEL_LAN_IP>:8000` to the simulator. This checks the network/HTTP workflow only; final real inference still needs Kevin's worker.
+
+### Automated simulator verification
+
+`tests/test_simulator_postgres.py` starts a real HTTP server and separate worker processes against a uniquely named isolated PostgreSQL schema. It tests two workers completing 100 inputs, crash recovery without manually changing database rows, failure exhaustion, authorization, and stats counts. It drops only its generated test schema afterward. Set TEST_DATABASE_URL to opt in:
+
+```bash
+python -m pytest tests/test_simulator_postgres.py -q
+```
+
+Simulator milestone verification: 36 checks passed (32 existing unit/API checks, one deterministic offline-pull/upload-retry test, and three real HTTP/process/PostgreSQL scenarios). Crash recovery required no manual database edits. The simulator retries an offline/expired pull after refreshing its heartbeat and bounds retries by the idle timeout. No database migration was needed for stats or the simulator.

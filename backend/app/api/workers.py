@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.models import Worker
 from app.schemas.worker import HeartbeatRequest, HeartbeatResponse, WorkerRegisterRequest, WorkerRegisterResponse, WorkerResponse
+from app.services.task_service import renew_heartbeat
 from app.services import worker_service
 from app.schemas.task import NextTaskResponse
 from app.services.scheduler import get_next_task
@@ -28,15 +29,9 @@ def workers(request: Request, limit: int = Query(100, ge=1, le=500), offset: int
 
 
 @router.post('/{worker_id}/heartbeat', response_model=HeartbeatResponse)
-def heartbeat(worker_id: UUID, payload: HeartbeatRequest, db: Session = Depends(get_db)):
-    worker = db.get(Worker, worker_id, with_for_update=True)
-    if worker is None:
-        raise HTTPException(404, 'Worker not found')
-    for key, value in payload.model_dump().items():
-        setattr(worker, key, value)
-    worker.last_heartbeat = func.clock_timestamp()
-    db.commit()
-    return HeartbeatResponse()
+def heartbeat(worker_id: UUID, payload: HeartbeatRequest, request: Request, db: Session = Depends(get_db)):
+    expiry = renew_heartbeat(db, worker_id, payload, request.app.state.settings)
+    return HeartbeatResponse(lease_expires_at=expiry)
 
 
 @router.post('/{worker_id}/next-task', response_model=NextTaskResponse)
