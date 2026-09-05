@@ -54,3 +54,30 @@ def test_cpu_only_ollama_does_not_register(monkeypatch):
     monkeypatch.setattr(inference.Summarizer,'gpu_memory_gb',lambda self:0)
     with pytest.raises(RuntimeError,match='GPU allocation'):
         setup(monkeypatch)
+
+
+def test_qa_prompt_keeps_question_and_source(monkeypatch):
+    model,calls=setup(monkeypatch,content='The document does not provide this information.')
+    result=model.predict(task()|{'task_type':'document-qa','instruction':'Who owns the library?'})
+    assert 'does not provide' in result[0]['text']
+    assert 'Who owns the library?' in calls[-1]['messages'][-1]['content']
+    assert 'First paragraph.' in calls[-1]['messages'][-1]['content']
+
+
+def test_structured_extraction(monkeypatch):
+    model,calls=setup(monkeypatch,content='{"names":["Abel"],"dates":[],"amounts":[],"action_items":[]}')
+    output=model.predict(task()|{'task_type':'information-extraction'})
+    assert output[0]['names']==['Abel'] and 'text' not in output[0]
+    assert calls[-1]['format']['type']=='object'
+
+
+@pytest.mark.parametrize('content',['not json','{"names":[]}', '{"names":123,"dates":[],"amounts":[],"action_items":[]}'])
+def test_invalid_extraction_rejected(monkeypatch,content):
+    model,_=setup(monkeypatch,content=content)
+    with pytest.raises(ValueError): model.predict(task()|{'task_type':'information-extraction'})
+
+
+def test_code_format_is_preserved(monkeypatch):
+    code='Use a guard.\n```python\nif not values:\n    return None\n```'
+    model,_=setup(monkeypatch,content=code)
+    assert model.predict(task()|{'task_type':'coding-assistance'})[0]['text']==code

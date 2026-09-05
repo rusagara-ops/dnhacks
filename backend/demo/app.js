@@ -1,12 +1,35 @@
 const $ = id => document.getElementById(id);
-let token = '', jobId = null, connected = false, polling = false;
+let token = '', jobId = null, connected = false, polling = false, jobMode = 'summarization';
 const example = `The city library is launching a three-month pilot to make its services easier to access. Starting in October, weekday closing time will move from 6 p.m. to 9 p.m. The change follows requests from residents who work during the day and need a quiet place to study in the evening.
 
 The pilot will also introduce a free digital skills workshop every Tuesday evening. Library staff will help participants use online job applications, create a basic resume, and access public services. Twelve computers will be available, and residents can reserve a place by phone or at the front desk.
 
 The city has allocated $18,000 for additional staffing during the pilot. Library managers will track evening attendance, workshop participation, and operating costs. At the end of the three months, they will present the findings to the city council, which will decide whether to continue the extended hours.`;
-function samples() { $('inputs').value = example; }
+const modes = {
+  'summarization': ['Summarize document →', 'One coherent summary of your entire document.'],
+  'document-qa': ['Ask question →', 'Answer a question using only the supplied document.'],
+  'information-extraction': ['Extract details →', 'Find names, dates, amounts, and action items in labeled fields.'],
+  'coding-assistance': ['Get code help →', 'Explain code or suggest a fix. Suggestions are displayed, never executed.']
+};
+function updateMode() {
+  const mode = $('mode').value;
+  const coding = mode === 'coding-assistance';
+  $('submit').textContent = modes[mode][0];
+  $('mode-help').textContent = modes[mode][1];
+  $('source-title').textContent = coding ? 'Code snippet' : 'Source document';
+  $('source-label').textContent = coding ? 'Paste code to explain or debug.' : 'Paste the entire English document, including all its paragraphs.';
+  $('inputs').placeholder = coding ? 'Paste your code here…' : 'Paste an English document here…';
+  $('instruction-field').hidden = !['document-qa', 'coding-assistance'].includes(mode);
+  $('instruction-label').textContent = coding ? 'What should we explain or fix? (optional)' : 'Question (required)';
+}
+$('mode').onchange = updateMode;
+function samples() {
+  const mode = $('mode').value;
+  $('inputs').value = mode === 'coding-assistance' ? 'def average(values):\n    return sum(values) / len(values)\n\nprint(average([]))' : example;
+  $('instruction').value = mode === 'document-qa' ? 'What is the staffing budget, and who decides whether the pilot continues?' : mode === 'coding-assistance' ? 'Why does this fail for an empty list? Suggest a fix.' : '';
+}
 samples();
+updateMode();
 $('sample').onclick = samples;
 const gib = value => Number.isFinite(value) ? `${value.toFixed(1)} GiB` : 'Not reported';
 function el(tag, text, cls) {
@@ -64,7 +87,17 @@ function renderResults(data) {
     const card = el('article', undefined, 'result');
     const result = data.results.find(r => r.index === task.input_start_index);
     card.append(el('small', `DOCUMENT ${task.input_start_index + 1} · ${task.status}`));
-    card.append(el('p', result?.text || (task.status === 'FAILED' ? 'Summary failed after retries.' : 'Waiting for the document summary…')));
+    if (result && 'names' in result) {
+      for (const [key, label] of Object.entries({names: 'Names', dates: 'Dates', amounts: 'Amounts', action_items: 'Action items'})) {
+        card.append(el('h3', label));
+        const list = el('ul');
+        for (const value of result[key]) list.append(el('li', value));
+        if (!result[key].length) list.append(el('li', 'Not found in source'));
+        card.append(list);
+      }
+    } else {
+      card.append(el(jobMode === 'coding-assistance' ? 'pre' : 'p', result?.text || (task.status === 'FAILED' ? 'Task failed after retries.' : 'Waiting for the result…')));
+    }
     card.append(el('small', `${task.worker_name || 'Unassigned'}${task.execution_time_ms !== null ? ' · ' + (task.execution_time_ms / 1000).toFixed(1) + 's' : ''} · attempt ${task.attempt_count}`));
     $('results').append(card);
   }
@@ -97,17 +130,22 @@ $('connect').onclick = async () => {
   }
 };
 $('submit').onclick = async () => {
+  const mode = $('mode').value;
+  const instruction = ['document-qa', 'coding-assistance'].includes(mode) ? $('instruction').value.trim() : '';
   const document = $('inputs').value.trim();
+  if (mode === 'document-qa' && !instruction) { $('error').textContent = 'Enter a question about the document.'; return; }
   if (!document) { $('error').textContent = 'Add a document first.'; return; }
-  if (new TextEncoder().encode(document).length > 6000) {
-    $('error').textContent = 'Keep the document under 6,000 UTF-8 bytes for this demo. It will not be silently truncated.';
+  if (new TextEncoder().encode(document).length > 6000 || new TextEncoder().encode(document + instruction).length > 6500) {
+    $('error').textContent = 'Keep the source under 6,000 UTF-8 bytes and source plus request under 6,500. Input will not be silently truncated.';
     return;
   }
   $('submit').disabled = true;
   $('error').textContent = '';
   try {
-    const job = await api('/jobs', { task_type: 'summarization', inputs: [document], optimization: 'fastest' });
+    const job = await api('/jobs', { task_type: mode, inputs: [document], optimization: 'fastest', ...(instruction ? {instruction} : {}) });
     jobId = job.job_id;
+    jobMode = mode;
+    $('result-title').textContent = {summarization: 'Document summary', 'document-qa': 'Answer', 'information-extraction': 'Extracted information', 'coding-assistance': 'Code assistance'}[mode];
     await refresh();
   } catch (error) { $('error').textContent = error.message; }
   finally { $('submit').disabled = !connected; }

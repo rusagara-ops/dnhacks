@@ -23,7 +23,7 @@ class WorkerRegisterRequest(InputModel):
     gpu_memory_gb: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     gpu_core_count: int | None = Field(default=None, gt=0, le=4096)
     gpu_memory_kind: Literal['unified', 'dedicated', 'unknown'] | None = None
-    supported_tasks: list[Literal['sentiment-classification', 'summarization']] = Field(min_length=1, max_length=2)
+    supported_tasks: list[Literal['sentiment-classification', 'summarization', 'document-qa', 'information-extraction', 'coding-assistance']] = Field(min_length=1, max_length=5)
     model_id: Name | None = None
     model_revision: Name | None = None
     benchmark_score: Positive = 1

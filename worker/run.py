@@ -7,7 +7,7 @@ import time
 import platform
 import socket
 
-from inference import Summarizer
+from inference import Summarizer, SUPPORTED_TASKS
 from hardware import hardware, memory_metrics
 
 import httpx
@@ -21,7 +21,7 @@ async def run(args):
     async with httpx.AsyncClient(base_url=args.url.rstrip('/'), headers=headers, timeout=10) as client:
         response = await client.post('/api/workers/register', json={
             'name': args.name, 'hostname': socket.gethostname(), 'cpu': platform.machine(), 'cpu_cores': os.cpu_count() or 1,
-            **info, 'supported_tasks': ['summarization'],
+            **info, 'supported_tasks': SUPPORTED_TASKS,
             'model_id': model.model_id, 'model_revision': model.model_revision,
         })
         response.raise_for_status()

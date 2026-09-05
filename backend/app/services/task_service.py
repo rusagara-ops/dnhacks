@@ -2,7 +2,7 @@ from datetime import timedelta
 from fastapi import HTTPException
 from sqlalchemy import select, func
 from app.models import Worker, Task, Job, TaskResult
-from app.schemas.task import TaskMutationResponse, JobResultResponse, FailedTask, GeneratedText, Prediction, TaskDetail
+from app.schemas.task import TaskMutationResponse, JobResultResponse, FailedTask, GeneratedText, Prediction, TaskDetail, ExtractionResult
 
 ACTIVE = ['ASSIGNED', 'RUNNING']
 
@@ -43,7 +43,7 @@ def complete_task(db, task_id, payload):
         if len(received) != len(expected) or set(received) != expected:
             raise HTTPException(422, 'Return exactly one prediction for every assigned input index')
         job = db.scalar(select(Job).where(Job.id == task.job_id).with_for_update())
-        expected_type = GeneratedText if job.task_type == 'summarization' else Prediction
+        expected_type = {'sentiment-classification': Prediction, 'information-extraction': ExtractionResult}.get(job.task_type, GeneratedText)
         if any(not isinstance(item, expected_type) for item in payload.results):
             raise HTTPException(422, 'Result format does not match the job task type')
         db.add(TaskResult(task_id=task.id, worker_id=worker.id,

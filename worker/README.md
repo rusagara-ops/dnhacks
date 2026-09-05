@@ -65,3 +65,13 @@ Use `ollama ps` to verify GPU placement. Detecting the GPU name alone does not p
 ## Tests
 
 Backend tests cover shape validation, exact model identity, full-document forwarding, output truncation rejection, and persisted heartbeat telemetry. The opt-in `RUN_REAL_MODEL_TEST=1` test requires the downloaded model, a running Ollama server, the worker environment, and `TEST_DATABASE_URL`. It uses an isolated temporary schema. Physical client-to-host connectivity must also be tested separately.
+
+## Additional task modes
+
+This worker now advertises `summarization`, `document-qa`, `information-extraction`, and `coding-assistance`. Restart an older worker to register the new capabilities. All modes reuse Gemma and keep one assignment active at a time.
+
+Q&A uses the assignment's `instruction` as its question, asks for answers grounded in the source, and returns a missing-information response when appropriate. Coding assistance accepts an optional request and preserves code formatting; it never runs the supplied or generated code. Extraction uses a JSON schema and returns arrays for `names`, `dates`, `amounts`, and `action_items`; malformed output is reported as an inference failure.
+
+The source limit remains 6,000 UTF-8 bytes. Source plus instruction must fit within 6,500 bytes. Output budgets are 320 tokens for summary/Q&A, 512 for extraction, and 700 for coding. These are selected automatically by task type. Model output is still fallible; inspect important answers and suggested fixes.
+
+See the backend README for request and response examples. `tests/test_real_modes_postgres.py` is an opt-in test covering known-answer Q&A, missing-answer Q&A, structured extraction, and code help through real GPU inference and persisted results.

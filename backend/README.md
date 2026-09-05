@@ -417,3 +417,30 @@ The dashboard refreshes every two seconds; measurements update at the configured
 ### Verification
 
 Check `/ready`, verify the Gemma worker is online, submit a multi-paragraph document, and confirm a single summary with persisted worker attribution and runtime. Verify GPU placement using Ollama, and compare available-memory readings over successive heartbeats. Browser clients need only the coordinator token, never database credentials.
+
+## Document Q&A, extraction, and coding assistance
+
+The demo now offers four task choices. All use the same pinned Gemma model, existing HTTP queue, result storage, retry logic, and heartbeat telemetry. No new migration is required for these task types; instructions are stored in each task's existing JSON payload.
+
+Use `POST /api/jobs` with `inputs: [source]` and one of:
+
+- `summarization`: unchanged; returns `{index,text}`.
+- `document-qa`: requires a nonblank `instruction` containing the question; returns `{index,text}`. The prompt asks for document-grounded answers and an explicit missing-information response.
+- `information-extraction`: returns `{index,names,dates,amounts,action_items}`. Every category is an array of strings, empty when nothing is found. Each array has at most 20 items; each item at most 300 characters. The worker uses Ollama structured output, validates it locally, and the coordinator validates it again before persistence.
+- `coding-assistance`: optional `instruction` describing the requested explanation or bug fix; defaults to explaining the code and identifying likely bugs. Returns `{index,text}` with whitespace and code fences preserved. Code is never executed.
+
+Example Q&A request:
+
+```json
+{
+  "task_type": "document-qa",
+  "inputs": ["The approved project budget is $18,000."],
+  "instruction": "What is the approved budget?"
+}
+```
+
+`instruction` is rejected for summary, extraction, and sentiment tasks. For Q&A/coding it is limited to 1,000 characters; each source is limited to 6,000 UTF-8 bytes, with a combined source-plus-instruction limit of 6,500 bytes. Assignments include optional `instruction`, captured at job creation. A batch shares the instruction across its independent inputs.
+
+Workers advertise all supported task types at registration. Existing workers must restart to advertise the new capabilities. Result rendering uses text nodes, so model-generated HTML and code are displayed without execution. The task selector does not replace pasted content; use **Load example** to deliberately load a sample for the selected mode.
+
+Generation limits: 320 tokens for summary/Q&A, 512 for extraction, 700 for coding assistance; context remains 8,192 tokens and temperature 0. Incomplete generation and malformed structured output follow the existing failure/retry flow. These limits bound the demo, not the model's full capabilities. Factual grounding is prompted and tested with examples, not guaranteed.

@@ -18,6 +18,7 @@ class TaskAssignment(BaseModel):
     model_id: str
     model_revision: str
     inputs: list[TaskInput]
+    instruction: str | None = None
 
 
 class NextTaskResponse(BaseModel):
@@ -40,11 +41,23 @@ class Prediction(BaseModel):
 class GeneratedText(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     index: Annotated[int, Field(ge=0, strict=True)]
-    text: str = Field(min_length=1, max_length=4000)
+    text: str = Field(min_length=1, max_length=8000)
+
+
+ExtractedItems = Annotated[list[Annotated[str, Field(min_length=1, max_length=300)]], Field(max_length=20)]
+
+
+class ExtractionResult(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    index: Annotated[int, Field(ge=0, strict=True)]
+    names: ExtractedItems
+    dates: ExtractedItems
+    amounts: ExtractedItems
+    action_items: ExtractedItems
 
 
 class TaskCompleteRequest(AssignmentRequest):
-    results: list[Prediction | GeneratedText] = Field(min_length=1, max_length=25)
+    results: list[Prediction | GeneratedText | ExtractionResult] = Field(min_length=1, max_length=25)
     execution_time_ms: Annotated[int, Field(ge=0, strict=True)]
 
 
@@ -87,7 +100,7 @@ class JobResultResponse(BaseModel):
     total_inputs: int
     completed_inputs: int
     failed_inputs: int
-    results: list[Prediction | GeneratedText]
+    results: list[Prediction | GeneratedText | ExtractionResult]
     failed_tasks: list[FailedTask]
 
     tasks: list[TaskDetail] = Field(default_factory=list)
