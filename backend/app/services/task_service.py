@@ -106,6 +106,15 @@ def renew_heartbeat(db, worker_id, payload, settings):
             expiry = min(now + timedelta(seconds=settings.task_lease_seconds), deadline)
             task.lease_expires_at = expiry
             task.status = 'RUNNING'
+        if payload.ram_available_gb is not None and payload.ram_available_gb > worker.ram_gb:
+            raise HTTPException(422, 'Available RAM exceeds total RAM')
+        if worker.gpu_memory_kind == 'unified' and payload.gpu_available_gb is not None:
+            raise HTTPException(422, 'Unified memory has no separate available GPU memory pool')
+        if payload.gpu_available_gb is not None and worker.gpu_memory_gb is not None and payload.gpu_available_gb > worker.gpu_memory_gb:
+            raise HTTPException(422, 'Available GPU memory exceeds total GPU memory')
+        worker.ram_available_gb = payload.ram_available_gb
+        worker.gpu_available_gb = payload.gpu_available_gb
+        worker.gpu_model_memory_gb = payload.gpu_model_memory_gb
         worker.cpu_utilization = payload.cpu_utilization
         worker.memory_utilization = payload.memory_utilization
         worker.active_tasks = payload.active_tasks

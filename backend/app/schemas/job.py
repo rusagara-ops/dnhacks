@@ -19,6 +19,8 @@ class JobCreateRequest(BaseModel):
 
     @model_validator(mode='after')
     def bounded_payload(self):
+        if self.task_type == 'summarization' and any(len(value.encode('utf-8')) > 6000 for value in self.inputs):
+            raise ValueError('Each summary document must be at most 6,000 UTF-8 bytes')
         if sum(len(value.encode('utf-8')) for value in self.inputs) > 1_000_000:
             raise ValueError('Combined input text must not exceed 1,000,000 UTF-8 bytes')
         return self

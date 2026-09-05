@@ -1,37 +1,67 @@
-# Kevin's worker: short-summary demo
+# Gemma remote-compute worker
 
-Runs a complete small model on each Mac and pulls independent paragraphs from Abel's coordinator. This distributes inference tasks; it does not split a single model across machines. M1/M2 Macs use CPU inference by default, including the 8 GB machines. Each process handles one assignment at a time while an independent heartbeat renews its lease.
+Abel's 24 GB Mac runs **Gemma 3 12B through Ollama**. Other laptops use the coordinator dashboard in a browser; they do not need Python, Ollama, a model download, or a running worker. This is remote inference on one compute host. Requests are queued and each worker handles one task at a time.
 
-## Setup on each Mac
+## Start on the compute Mac
 
-Use Python 3.12. From the repository root on `abel-backend`:
+Install Ollama for macOS and Python 3.12. From the repository root:
 
 ```sh
 python3.12 -m venv worker/.venv
 worker/.venv/bin/python -m pip install -r worker/requirements.txt
 ```
 
-Set `API_TOKEN` to the same value as the coordinator's `backend/.env` (enter it locally; do not commit it). Then run:
+Start `worker/start-ollama.command` in Terminal. It sets one loaded model, one concurrent inference, an 8,192-token context, and a loopback-only Ollama server. On Abel's machine the runtime was downloaded to `worker/.cache/ollama/`; elsewhere it uses an installed `ollama` command. Model weights are stored in `worker/.cache/ollama-models/`.
+
+In another terminal, download the model once:
 
 ```sh
-export API_TOKEN='your-coordinator-token'
-worker/.venv/bin/python worker/run.py --url http://COORDINATOR_LAN_IP:8000 --name Kevin-Mac --ram-gb 8
+ollama pull gemma3:12b
 ```
 
-Use a distinct name for each Mac; use `--ram-gb 24` on the 24 GB machine. The coordinator must listen on `0.0.0.0`, macOS must allow incoming connections, and the machines must be able to reach one another on the network. Test `http://COORDINATOR_LAN_IP:8000/health` from the second Mac first. Guest Wi-Fi may isolate devices.
+For the repository-local runtime on Abel's Mac, use `worker/.cache/ollama/ollama pull gemma3:12b` instead. Allow approximately 8.1 GB for weights plus runtime files and working memory. Do not start a second Ollama server on the same port.
 
-First launch downloads model weights to `worker/.cache/huggingface/`, then registers. Allow internet access and several minutes for setup before the demo. Subsequent launches reuse the cache. The worker never needs a Supabase URL or database password. Stop with Ctrl+C; unfinished assignments are recovered after heartbeat/lease expiry. Restarting creates a new worker registration, so old offline entries may remain.
+Read the installed model's full `digest` from `http://127.0.0.1:11434/api/tags`. Configure `backend/.env` with `INFERENCE_MODEL_ID=gemma3:12b` and that digest as `INFERENCE_MODEL_REVISION`, preserving the existing database URL and API token. Restart the coordinator after changing these values. The worker advertises the installed digest; mismatched jobs are not claimed.
 
-## Fixed inference contract
+Enter the same coordinator API token privately in zsh:
 
-- Task: `summarization`; one English paragraph per assignment.
-- Model: `Qwen/Qwen2.5-0.5B-Instruct`.
-- Revision: `7ae557604adf67be50417f59c2c2f167def9a775`.
-- Prompt: summarize in one short sentence using only provided facts; return only the summary.
-- Source limit: first 512 model tokens. Output limit: 64 new tokens; greedy decoding.
-- Result: `{"index": 0, "text": "The summary."}`. Preserve the assigned index.
-- Completion includes `worker_id`, `assignment_id`, `results`, and `execution_time_ms`.
+```sh
+read -s "API_TOKEN?Coordinator API token: "
+export API_TOKEN
+echo
+worker/.venv/bin/python worker/run.py --url http://127.0.0.1:8000 --name Abel-Mac
+```
 
-The model and revision must match the job snapshot. A worker downloads before registration so it cannot claim work during model loading. CPU inference runs off the asynchronous networking loop. Failed inference is reported through `/api/tasks/{id}/fail`; expired assignments discard their output. Completion retries reuse exactly the same assignment and payload.
+Hardware capacity is detected automatically. The old `--ram-gb` flag has been removed. Model warmup happens before registration. Inference runs off the heartbeat loop; heartbeats continue while generating. Stop with Ctrl+C. Restarting creates a new registration, so old records may remain offline.
 
-The small model prioritizes laptop compatibility over summary quality. Review demo examples beforehand. A successful local two-process test proves the integration; it does not establish connectivity or performance on a second physical Mac.
+## Client laptops
+
+Open `http://ABEL_LAN_IP:8000/demo/` and enter the coordinator API token. Paste the entire document and click **Summarize document**. Keep the computers on a network that permits connectivity. Clients must use Abel's address, not `localhost`. Stop old Qwen workers on the client laptops.
+
+## Summary contract
+
+- `task_type`: `summarization`.
+- `model_id`: `gemma3:12b`; revision is the installed Ollama manifest digest.
+- Each input is a complete document, preserving paragraph breaks.
+- Demo dashboard submits `inputs: [document]`, so one document produces one summary.
+- Limit: 6,000 UTF-8 bytes per document, rejected rather than silently truncated.
+- Context: 8,192 tokens; maximum generated output: 320 tokens; temperature: 0.
+- Prompt requests a coherent paragraph of approximately 100–150 words, or fewer for short sources.
+- Result: `{ "index": 0, "text": "The document summary." }`.
+- A generation that reaches the output limit is treated as incomplete and reported as failure, not stored as a successful truncated summary.
+
+The API still supports a batch of separate documents; these produce separate summaries. Existing sentiment jobs and results remain compatible. Model output is untrusted text and the dashboard renders it as text, never HTML.
+
+## RAM and GPU telemetry
+
+All API fields ending in `_gb` use binary GiB (bytes divided by 1024³); the dashboard labels units explicitly.
+
+Registration detects total RAM, GPU name, GPU core count, and whether memory is unified. Heartbeats update `ram_available_gb`, `cpu_utilization`, `memory_utilization`, and `gpu_model_memory_gb` (Ollama's reported GPU allocation for this model).
+
+Apple Silicon uses one shared memory pool. `gpu_memory_gb` and `gpu_available_gb` remain null instead of inventing separate VRAM. The dashboard shows available shared RAM as an estimate and states that it is not a guaranteed GPU allocation budget. Free GPU cores/utilization are not reported. Offline or unsupported live measurements show unavailable, not zero.
+
+Use `ollama ps` to verify GPU placement. Detecting the GPU name alone does not prove the model is GPU accelerated. The Gemma worker requires a positive Ollama GPU allocation after warmup before registering. If a sandbox-launched server sees only CPU, stop that server and start `worker/start-ollama.command` in normal Terminal, then verify again.
+
+## Tests
+
+Backend tests cover shape validation, exact model identity, full-document forwarding, output truncation rejection, and persisted heartbeat telemetry. The opt-in `RUN_REAL_MODEL_TEST=1` test requires the downloaded model, a running Ollama server, the worker environment, and `TEST_DATABASE_URL`. It uses an isolated temporary schema. Physical client-to-host connectivity must also be tested separately.

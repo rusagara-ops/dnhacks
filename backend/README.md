@@ -382,41 +382,38 @@ python -m pytest tests/test_simulator_postgres.py -q
 
 Simulator milestone verification: 36 checks passed (32 existing unit/API checks, one deterministic offline-pull/upload-retry test, and three real HTTP/process/PostgreSQL scenarios). Crash recovery required no manual database edits. The simulator retries an offline/expired pull after refreshing its heartbeat and bounds retries by the idle timeout. No database migration was needed for stats or the simulator.
 
-## Three-Mac summary demo (abel-backend)
+## Gemma remote-compute demo (abel-backend)
 
-A temporary dashboard lives at `/demo/`, inside `backend/demo/`. It is separate from Ronald's `frontend/` so the production frontend can consume the same APIs later. Launch the coordinator from `backend/`:
+Abel's Mac runs the coordinator and one Gemma 3 12B worker; client laptops open `/demo/` remotely. The temporary dashboard is in `backend/demo/`, separate from Ronald's `frontend/`. See `worker/README.md` for startup, model download, GPU verification, and client instructions.
+
+From `backend/`, start the coordinator with:
 
 ```sh
 .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Keep your existing `DATABASE_URL` and `API_TOKEN` in `backend/.env`, and configure:
+In `backend/.env`, preserve `DATABASE_URL` and `API_TOKEN`; set `INFERENCE_MODEL_ID=gemma3:12b` and `INFERENCE_MODEL_REVISION` to the installed model's full Ollama digest from `/api/tags`. Restart the backend after changes. Never commit `.env`.
 
-```dotenv
-INFERENCE_MODEL_ID=Qwen/Qwen2.5-0.5B-Instruct
-INFERENCE_MODEL_REVISION=7ae557604adf67be50417f59c2c2f167def9a775
-```
+### API contract for teammate agents
 
-Open `http://localhost:8000/demo/`, enter the coordinator API token, and connect. Start workers using `worker/README.md`, load the sample paragraphs, and distribute them. The page polls every two seconds and shows each task's producing worker, status, attempt count and execution time. The token stays in page memory and is not saved to browser storage. This is a local trusted-network demo using HTTP.
+`POST /api/jobs` accepts `task_type: "summarization"` and `inputs: [document]`. Paragraph breaks are preserved. The dashboard submits the entire document as one input, producing one summary paragraph. Each input is limited to 6,000 UTF-8 bytes; the server rejects longer documents. Batch API clients can still send multiple independent documents. Each document is one task; sentiment tasks retain 25-input chunks.
 
-### Additions for teammate agents
+`POST /api/tasks/{task_id}/complete` accepts summary `{index,text}` results and validates their shape against the job type. Existing sentiment `{index,label,score}` results remain supported. Jobs pin model ID and revision at creation.
 
-`POST /api/jobs` now also accepts `task_type: "summarization"`. Every input becomes one task so small batches can use multiple Macs. Sentiment jobs retain the existing 25-input chunks. Jobs still pin the configured model ID and revision at creation.
+`GET /api/jobs/{job_id}/results` includes summary results plus a `tasks` array containing task ID, input start index/count, status, worker ID/name, attempt count and execution time. The worker identity is the current/final owner, not a full attempt history.
 
-`POST /api/workers/register` accepts `summarization` in `supported_tasks`. Workers only claim matching task types and exact model revisions.
+The existing three-attempt retry and partial-result behavior is unchanged: once all tasks finish, any permanently failed task makes the job `FAILED`, with successful results retained.
 
-`POST /api/tasks/{task_id}/complete` accepts summary results as `{"index": 0, "text": "A short summary."}`. The coordinator validates result shape against the job type and requires exactly the assigned input indices. Existing sentiment `{index,label,score}` results remain supported.
+### Resource reporting
 
-`GET /api/jobs/{job_id}/results` retains its existing counters and results, and adds a `tasks` array with `task_id`, `input_start_index`, `input_count`, `status`, `worker_id`, `worker_name`, `attempt_count`, and `execution_time_ms`. Use this to display attribution and active work. `worker_id` is the final/current owner, not a history of every attempt. Failed/requeued tasks may have no owner.
+Migration `47bc91eea204` adds nullable worker fields, preserving compatibility with old workers. Run migrations before starting the updated backend.
 
-No additional database migration is needed: existing text task types and JSON result columns support this contract. If a task fails permanently after three attempts, other tasks continue. Once all tasks finish, the job is `FAILED` with successful partial results preserved.
+Registration adds `gpu_core_count` and `gpu_memory_kind` (`unified`, `dedicated`, or `unknown`). Total RAM remains `ram_gb`; GPU identity is `gpu`. For Apple Silicon, `gpu_memory_gb` is null because GPU memory is shared with RAM.
 
-### Demo checks
+Heartbeats add `ram_available_gb`, `gpu_available_gb`, and `gpu_model_memory_gb`; `/api/workers` returns them. Units are GiB despite the legacy `_gb` names. Missing telemetry is null. Available RAM cannot exceed registered total RAM. Unified-memory workers cannot report a separate available GPU pool. `gpu_model_memory_gb` comes from Ollama's model allocation, not a whole-system GPU usage meter.
 
-1. Confirm `/ready` passes and each participating Mac appears online.
-2. Submit at least six paragraphs; confirm results include at least two distinct physical worker names.
-3. Reload the job through its results API to verify persisted output.
-4. Stop an active worker; confirm another worker recovers its task after expiry.
-5. Keep the laptop awake and predownload the model on every Mac before presenting.
+The dashboard refreshes every two seconds; measurements update at the configured worker heartbeat interval. Offline worker availability is shown as unavailable. The scheduler still assigns one matching task at a time; these metrics are observability, not memory-based admission control.
 
-The automated real-model test is opt-in (`RUN_REAL_MODEL_TEST=1`) and needs `TEST_DATABASE_URL` plus the worker virtual environment. It creates and removes an isolated test schema. It runs two worker processes on one computer; a separate physical-Mac test is still required.
+### Verification
+
+Check `/ready`, verify the Gemma worker is online, submit a multi-paragraph document, and confirm a single summary with persisted worker attribution and runtime. Verify GPU placement using Ollama, and compare available-memory readings over successive heartbeats. Browser clients need only the coordinator token, never database credentials.

@@ -13,6 +13,11 @@ class Worker(Base):
         CheckConstraint('cpu_cores > 0', name='worker_cpu_positive'),
         CheckConstraint('ram_gb > 0', name='worker_ram_positive'),
         CheckConstraint('gpu_memory_gb IS NULL OR gpu_memory_gb >= 0', name='worker_gpu_memory_nonnegative'),
+        CheckConstraint('gpu_core_count IS NULL OR gpu_core_count > 0', name='worker_gpu_cores_positive'),
+        CheckConstraint("gpu_memory_kind IS NULL OR gpu_memory_kind IN ('unified','dedicated','unknown')", name='worker_memory_kind_valid'),
+        CheckConstraint('ram_available_gb IS NULL OR (ram_available_gb >= 0 AND ram_available_gb <= ram_gb)', name='worker_available_ram_range'),
+        CheckConstraint('gpu_available_gb IS NULL OR gpu_available_gb >= 0', name='worker_available_gpu_nonnegative'),
+        CheckConstraint('gpu_model_memory_gb IS NULL OR gpu_model_memory_gb >= 0', name='worker_gpu_model_nonnegative'),
         CheckConstraint('benchmark_score > 0', name='worker_benchmark_positive'),
         CheckConstraint('cpu_utilization BETWEEN 0 AND 100', name='worker_cpu_utilization_range'),
         CheckConstraint('memory_utilization BETWEEN 0 AND 100', name='worker_memory_utilization_range'),
@@ -27,6 +32,11 @@ class Worker(Base):
     ram_gb: Mapped[float] = mapped_column(Float)
     gpu: Mapped[str | None] = mapped_column(Text)
     gpu_memory_gb: Mapped[float | None] = mapped_column(Float)
+    gpu_core_count: Mapped[int | None] = mapped_column(Integer)
+    gpu_memory_kind: Mapped[str | None] = mapped_column(Text)
+    ram_available_gb: Mapped[float | None] = mapped_column(Float)
+    gpu_available_gb: Mapped[float | None] = mapped_column(Float)
+    gpu_model_memory_gb: Mapped[float | None] = mapped_column(Float)
     supported_tasks: Mapped[list[str]] = mapped_column(JSONB)
     model_id: Mapped[str | None] = mapped_column(Text)
     model_revision: Mapped[str | None] = mapped_column(Text)
