@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.workers import router
+from app.api.jobs import router as jobs_router
 from app.core.config import Settings
 from app.db.database import make_engine, make_sessions
 
@@ -40,12 +41,13 @@ def create_app(settings: Settings | None = None):
             if engine:
                 engine.dispose()
 
-    app = FastAPI(title='DNhacks Coordinator', version='0.1.0', lifespan=lifespan)
+    app = FastAPI(title='DNhacks Coordinator', version='0.2.0', lifespan=lifespan)
     app.state.settings = settings
     app.state.sessions = None
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
                        allow_methods=['GET', 'POST'], allow_headers=['Content-Type', 'Authorization'])
     app.include_router(router, prefix='/api', dependencies=[Depends(require_token)])
+    app.include_router(jobs_router, prefix='/api', dependencies=[Depends(require_token)])
 
     @app.exception_handler(SQLAlchemyError)
     async def database_error(request, exc):
@@ -64,6 +66,8 @@ def create_app(settings: Settings | None = None):
         with app.state.sessions() as db:
             db.execute(text('SELECT 1'))
             db.execute(text('SELECT id FROM coordinator.workers LIMIT 0'))
+            db.execute(text('SELECT id FROM coordinator.jobs LIMIT 0'))
+            db.execute(text('SELECT id FROM coordinator.tasks LIMIT 0'))
         return {'status': 'ok', 'database': 'ok'}
 
     return app
