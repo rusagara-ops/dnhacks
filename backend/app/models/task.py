@@ -21,6 +21,7 @@ class Task(Base):
     job_id: Mapped[UUID] = mapped_column(ForeignKey('coordinator.jobs.id', ondelete='CASCADE'), index=True)
     start_index: Mapped[int] = mapped_column(Integer)
     input_count: Mapped[int] = mapped_column(Integer)
+    last_error: Mapped[dict | None] = mapped_column(JSONB)
     payload: Mapped[dict] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(Text, default='QUEUED', server_default='QUEUED', index=True)
     assigned_worker_id: Mapped[UUID | None] = mapped_column(ForeignKey('coordinator.workers.id'), index=True)

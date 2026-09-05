@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     )
     inference_model_id: str | None = Field(default=None, min_length=1)
     inference_model_revision: str | None = Field(default=None, min_length=1)
+    task_max_runtime_seconds: int = Field(default=1800, ge=30, le=86400)
+    recovery_interval_seconds: int = Field(default=5, ge=1, le=60)
     task_lease_seconds: int = Field(default=300, ge=30, le=3600)
     database_url: SecretStr | None = None
     api_token: SecretStr | None = None
@@ -19,6 +21,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode='after')
     def validate_timeout(self):
+        if self.task_max_runtime_seconds < self.task_lease_seconds:
+            raise ValueError('Maximum task runtime must be at least the lease duration')
         if bool(self.inference_model_id) != bool(self.inference_model_revision):
             raise ValueError('Set both inference model ID and revision, or neither')
         if self.worker_timeout_seconds <= self.heartbeat_interval_seconds:

@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 import logging
 import secrets
 
@@ -11,6 +12,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.workers import router
 from app.api.jobs import router as jobs_router
+from app.api.tasks import router as tasks_router
+from app.services.recovery import recover_expired
 from app.core.config import Settings
 from app.db.database import make_engine, make_sessions
 
@@ -35,18 +38,36 @@ def create_app(settings: Settings | None = None):
     async def lifespan(app):
         engine = make_engine(settings.database_url.get_secret_value()) if settings.database_url else None
         app.state.sessions = make_sessions(engine) if engine else None
+        stop = asyncio.Event()
+        def sweep():
+            with app.state.sessions() as db:
+                recover_expired(db, settings)
+        async def recovery_loop():
+            while not stop.is_set():
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=settings.recovery_interval_seconds)
+                except TimeoutError:
+                    try:
+                        await asyncio.to_thread(sweep)
+                    except Exception as exc:
+                        logger.error('Recovery failed: %s', type(exc).__name__)
+        recovery_task = asyncio.create_task(recovery_loop()) if engine else None
         try:
             yield
         finally:
+            stop.set()
+            if recovery_task:
+                await recovery_task
             if engine:
                 engine.dispose()
 
-    app = FastAPI(title='DNhacks Coordinator', version='0.3.0', lifespan=lifespan)
+    app = FastAPI(title='DNhacks Coordinator', version='0.4.0', lifespan=lifespan)
     app.state.settings = settings
     app.state.sessions = None
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
                        allow_methods=['GET', 'POST'], allow_headers=['Content-Type', 'Authorization'])
     app.include_router(router, prefix='/api', dependencies=[Depends(require_token)])
+    app.include_router(tasks_router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(jobs_router, prefix='/api', dependencies=[Depends(require_token)])
 
     @app.exception_handler(SQLAlchemyError)
@@ -67,7 +88,8 @@ def create_app(settings: Settings | None = None):
             db.execute(text('SELECT 1'))
             db.execute(text('SELECT id FROM coordinator.workers LIMIT 0'))
             db.execute(text('SELECT id, model_id, model_revision FROM coordinator.jobs LIMIT 0'))
-            db.execute(text('SELECT id FROM coordinator.tasks LIMIT 0'))
+            db.execute(text('SELECT id, last_error FROM coordinator.tasks LIMIT 0'))
+            db.execute(text('SELECT task_id FROM coordinator.task_results LIMIT 0'))
         return {'status': 'ok', 'database': 'ok'}
 
     return app

@@ -100,8 +100,8 @@ def test_filtering_and_expiry(factory):
     assert result.job_id==good
     with factory.begin() as db:
         db.get(Task,result.task_id).lease_expires_at=datetime.now(timezone.utc)-timedelta(seconds=1)
-    with pytest.raises(HTTPException) as e: claim(factory,worker)
-    assert e.value.status_code==409
+    replacement = claim(factory,worker)
+    assert replacement.assignment_id != result.assignment_id
 
 
 def test_offline_unknown_unconfigured_and_empty(factory):

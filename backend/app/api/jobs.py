@@ -6,6 +6,8 @@ from app.db.database import get_db
 from app.models import Job
 from app.schemas.job import JobCreateRequest, JobCreateResponse, JobResponse
 from app.services import job_service
+from app.schemas.task import JobResultResponse
+from app.services.task_service import job_results
 
 router = APIRouter(prefix='/jobs', tags=['jobs'])
 logger = logging.getLogger(__name__)
@@ -30,3 +32,8 @@ def get_job(job_id: UUID, db: Session = Depends(get_db)):
     if job is None:
         raise HTTPException(404, 'Job not found')
     return job_service.describe_job(job)
+
+
+@router.get('/{job_id}/results', response_model=JobResultResponse)
+def results(job_id: UUID, db: Session = Depends(get_db)):
+    return job_results(db, job_id)
