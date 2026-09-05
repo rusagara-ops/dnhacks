@@ -5,22 +5,23 @@ from app.schemas.job import JobResponse
 CHUNK_SIZE = 25
 
 
-def split_into_tasks(inputs):
-    for start in range(0, len(inputs), CHUNK_SIZE):
-        chunk = inputs[start:start + CHUNK_SIZE]
+def split_into_tasks(inputs, chunk_size=CHUNK_SIZE):
+    for start in range(0, len(inputs), chunk_size):
+        chunk = inputs[start:start + chunk_size]
         yield {'start_index': start, 'input_count': len(chunk), 'payload': {
             'inputs': [{'index': start + offset, 'text': value} for offset, value in enumerate(chunk)]
         }}
 
 
 def create_job(db, payload, model_id=None, model_revision=None):
+    chunk_size = 1 if payload.task_type == 'summarization' else CHUNK_SIZE
     # The job and every chunk must become visible together, or not at all.
     with db.begin():
         job = Job(model_id=model_id, model_revision=model_revision, task_type=payload.task_type, optimization=payload.optimization,
-                  total_inputs=len(payload.inputs), total_tasks=(len(payload.inputs) + CHUNK_SIZE - 1) // CHUNK_SIZE)
+                  total_inputs=len(payload.inputs), total_tasks=(len(payload.inputs) + chunk_size - 1) // chunk_size)
         db.add(job)
         db.flush()
-        db.add_all(Task(job_id=job.id, **chunk) for chunk in split_into_tasks(payload.inputs))
+        db.add_all(Task(job_id=job.id, **chunk) for chunk in split_into_tasks(payload.inputs, chunk_size))
         db.flush()
     return job
 

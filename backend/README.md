@@ -381,3 +381,42 @@ python -m pytest tests/test_simulator_postgres.py -q
 ```
 
 Simulator milestone verification: 36 checks passed (32 existing unit/API checks, one deterministic offline-pull/upload-retry test, and three real HTTP/process/PostgreSQL scenarios). Crash recovery required no manual database edits. The simulator retries an offline/expired pull after refreshing its heartbeat and bounds retries by the idle timeout. No database migration was needed for stats or the simulator.
+
+## Three-Mac summary demo (abel-backend)
+
+A temporary dashboard lives at `/demo/`, inside `backend/demo/`. It is separate from Ronald's `frontend/` so the production frontend can consume the same APIs later. Launch the coordinator from `backend/`:
+
+```sh
+.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Keep your existing `DATABASE_URL` and `API_TOKEN` in `backend/.env`, and configure:
+
+```dotenv
+INFERENCE_MODEL_ID=Qwen/Qwen2.5-0.5B-Instruct
+INFERENCE_MODEL_REVISION=7ae557604adf67be50417f59c2c2f167def9a775
+```
+
+Open `http://localhost:8000/demo/`, enter the coordinator API token, and connect. Start workers using `worker/README.md`, load the sample paragraphs, and distribute them. The page polls every two seconds and shows each task's producing worker, status, attempt count and execution time. The token stays in page memory and is not saved to browser storage. This is a local trusted-network demo using HTTP.
+
+### Additions for teammate agents
+
+`POST /api/jobs` now also accepts `task_type: "summarization"`. Every input becomes one task so small batches can use multiple Macs. Sentiment jobs retain the existing 25-input chunks. Jobs still pin the configured model ID and revision at creation.
+
+`POST /api/workers/register` accepts `summarization` in `supported_tasks`. Workers only claim matching task types and exact model revisions.
+
+`POST /api/tasks/{task_id}/complete` accepts summary results as `{"index": 0, "text": "A short summary."}`. The coordinator validates result shape against the job type and requires exactly the assigned input indices. Existing sentiment `{index,label,score}` results remain supported.
+
+`GET /api/jobs/{job_id}/results` retains its existing counters and results, and adds a `tasks` array with `task_id`, `input_start_index`, `input_count`, `status`, `worker_id`, `worker_name`, `attempt_count`, and `execution_time_ms`. Use this to display attribution and active work. `worker_id` is the final/current owner, not a history of every attempt. Failed/requeued tasks may have no owner.
+
+No additional database migration is needed: existing text task types and JSON result columns support this contract. If a task fails permanently after three attempts, other tasks continue. Once all tasks finish, the job is `FAILED` with successful partial results preserved.
+
+### Demo checks
+
+1. Confirm `/ready` passes and each participating Mac appears online.
+2. Submit at least six paragraphs; confirm results include at least two distinct physical worker names.
+3. Reload the job through its results API to verify persisted output.
+4. Stop an active worker; confirm another worker recovers its task after expiry.
+5. Keep the laptop awake and predownload the model on every Mac before presenting.
+
+The automated real-model test is opt-in (`RUN_REAL_MODEL_TEST=1`) and needs `TEST_DATABASE_URL` plus the worker virtual environment. It creates and removes an isolated test schema. It runs two worker processes on one computer; a separate physical-Mac test is still required.

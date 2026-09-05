@@ -21,7 +21,7 @@ class WorkerRegisterRequest(InputModel):
     ram_gb: Positive
     gpu: Name | None = None
     gpu_memory_gb: float | None = Field(default=None, ge=0, allow_inf_nan=False)
-    supported_tasks: list[Literal['sentiment-classification']] = Field(min_length=1, max_length=1)
+    supported_tasks: list[Literal['sentiment-classification', 'summarization']] = Field(min_length=1, max_length=2)
     model_id: Name | None = None
     model_revision: Name | None = None
     benchmark_score: Positive = 1

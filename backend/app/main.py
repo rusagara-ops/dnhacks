@@ -2,6 +2,8 @@ from contextlib import asynccontextmanager
 import asyncio
 import logging
 import secrets
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -94,6 +96,7 @@ def create_app(settings: Settings | None = None):
             db.execute(text('SELECT task_id FROM coordinator.task_results LIMIT 0'))
         return {'status': 'ok', 'database': 'ok'}
 
+    app.mount('/demo', StaticFiles(directory=Path(__file__).resolve().parents[1] / 'demo', html=True), name='demo')
     return app
 
 

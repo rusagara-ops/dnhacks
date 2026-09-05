@@ -37,8 +37,14 @@ class Prediction(BaseModel):
     score: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
 
 
+class GeneratedText(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    index: Annotated[int, Field(ge=0, strict=True)]
+    text: str = Field(min_length=1, max_length=4000)
+
+
 class TaskCompleteRequest(AssignmentRequest):
-    results: list[Prediction] = Field(min_length=1, max_length=25)
+    results: list[Prediction | GeneratedText] = Field(min_length=1, max_length=25)
     execution_time_ms: Annotated[int, Field(ge=0, strict=True)]
 
 
@@ -63,6 +69,17 @@ class FailedTask(BaseModel):
     error_code: str
 
 
+class TaskDetail(BaseModel):
+    task_id: UUID
+    input_start_index: int
+    input_count: int
+    status: str
+    worker_id: UUID | None
+    worker_name: str | None
+    attempt_count: int
+    execution_time_ms: int | None
+
+
 class JobResultResponse(BaseModel):
     job_id: UUID
     status: Literal['QUEUED', 'RUNNING', 'COMPLETED', 'FAILED']
@@ -70,5 +87,7 @@ class JobResultResponse(BaseModel):
     total_inputs: int
     completed_inputs: int
     failed_inputs: int
-    results: list[Prediction]
+    results: list[Prediction | GeneratedText]
     failed_tasks: list[FailedTask]
+
+    tasks: list[TaskDetail] = Field(default_factory=list)
