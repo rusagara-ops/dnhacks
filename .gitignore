@@ -1,0 +1,22 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# OS files and logs
+.DS_Store
+Thumbs.db
+*.log
+
+# Common dependency and generated directories
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.next/
+dist/
+build/
+coverage/
