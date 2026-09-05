@@ -2,7 +2,7 @@
 
 Owner: Abel. The coordinator runs on Abel's laptop for the demo. It manages worker presence, jobs, task assignment, retries and results. Kevin's worker performs inference; Ronald's frontend calls this HTTP API. Neither teammate needs the database password.
 
-## Current implementation (v0.4)
+## Current implementation (v0.5)
 
 Implemented:
 
@@ -17,7 +17,7 @@ Implemented:
 - Optional shared demo bearer token and configured CORS origins.
 - Liveness and database readiness endpoints; read-only connection check.
 
-Implemented in v0.4: completion/failure endpoints, result storage, assignment-specific lease renewal, offline/expired-task recovery, and partial job results. Not implemented yet: dashboard stats and real inference integration. Worker registration/heartbeat/pull and job endpoints are implemented. Completion, failure and job result interfaces are implemented; stats remains planned. No model or model revision has been chosen yet.
+Implemented in v0.4: completion/failure endpoints, result storage, assignment-specific lease renewal, offline/expired-task recovery, and partial job results. Implemented in v0.5: dashboard stats and an HTTP-only simulated worker. Real inference integration remains pending. Worker registration/heartbeat/pull and job endpoints are implemented. Completion, failure, job result and stats interfaces are implemented. No model or model revision has been chosen yet.
 
 Database verification (2026-09-05): the worker migration is applied to the shared Supabase project. SELECT 1, readiness, registration, persistence across app restarts/new connection pools, heartbeat BUSY/AVAILABLE transitions, and enabled worker-table RLS were verified. The separate disposable-database integration test remains available. A simulated worker named Abel-Persistence-Test was retained and will become OFFLINE when its heartbeats stop.
 
@@ -234,7 +234,7 @@ A chunk succeeds or fails as a whole. Maximum three assignments per task; increm
 
 Returns `job_id`, `status`, `is_final`, `total_inputs`, `completed_inputs`, `failed_inputs`, ordered `results` (`index`, `label`, `score`), and `failed_tasks` (`task_id`, `input_start_index`, `input_count`, `error_code`). Partial results are available while processing. Predictions remain in original input order even when tasks finish out of order.
 
-`GET /api/stats` remains planned.
+`GET /api/stats` is implemented; see the dashboard statistics section below.
 
 Job statuses: `QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`.
 
@@ -305,3 +305,79 @@ The periodic recovery loop runs with the API process and stops on shutdown. Pull
 No `/start` call is required: assignment is ASSIGNED, and an assignment-specific heartbeat marks it RUNNING. A worker can also complete an ASSIGNED task directly if it finishes before the next heartbeat.
 
 Lifecycle verification: 48 automated checks passed across unit/API validation and isolated PostgreSQL tests. A live HTTP test also passed completion, duplicate completion, lease renewal, periodic background recovery, retry exhaustion, ordered partial FAILED results, persistence across app restarts, and result-table RLS. Only synthetic verification rows were removed afterward. Real model execution on two laptops remains to be tested.
+
+
+## Dashboard statistics — Ronald
+
+`GET /api/stats` requires the configured bearer token and returns one consistent database snapshot:
+
+```json
+{
+  "workers_online": 2,
+  "workers_available": 1,
+  "workers_busy": 1,
+  "jobs_queued": 0,
+  "jobs_running": 1,
+  "jobs_completed": 2,
+  "jobs_failed": 0,
+  "tasks_completed": 8,
+  "total_inferences": 200
+}
+```
+
+Worker counts exclude timed-out registrations. AVAILABLE/BUSY use the heartbeat-reported active-task count, matching the worker-list API. `total_inferences` counts accepted input predictions, not task attempts, model loads, retries or failed inputs. Simulated predictions count too; this is not a measure of verified real model execution. Job/task counters cover the whole repository database, including any retained demo jobs. Empty databases return zeros. Poll once per second for the demo.
+
+## Simulated worker — test without Kevin
+
+This script generates deterministic fake predictions (alternating labels by input index, score 0.5). It is not sentiment inference. Its fixed model is `simulation/sentiment`, revision `v1`, so it cannot claim jobs pinned to a real model.
+
+Install the backend development dependencies, then start a simulation coordinator from `backend/`:
+
+```bash
+source .venv/bin/activate
+INFERENCE_MODEL_ID=simulation/sentiment INFERENCE_MODEL_REVISION=v1 uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+These command-scoped settings do not edit `.env`. The coordinator uses the configured database and creates persistent demo data. Stop any existing server on port 8000 first. Old jobs without these exact model pins are not eligible.
+
+In each worker terminal, from `backend/`:
+
+```bash
+source .venv/bin/activate
+export API_TOKEN='<same demo token configured for the backend>'
+python -m scripts.simulated_worker --name Simulator-A --max-tasks 100 --delay 2
+```
+
+Start a second terminal with `--name Simulator-B`. The worker reads only the API_TOKEN environment variable; it does not require a database password or Supabase credentials. `httpx` is included in `requirements-dev.txt`.
+
+Create a job using `/docs` (Authorize with the same demo token), or:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/jobs   -H "Authorization: Bearer $API_TOKEN"   -H 'Content-Type: application/json'   -d '{"task_type":"sentiment-classification","inputs":["demo input one","demo input two"],"optimization":"fastest"}'
+```
+
+For both workers to participate, submit more than 25 inputs so there is more than one task. A two-input example creates just one task. Use the returned job ID with `GET /api/jobs/{id}/results` and observe `/api/stats`.
+
+The simulator sends independent heartbeats during its delay, includes assignment IDs for renewal, retries ambiguous result uploads with the same payload, and discards results after a stale-assignment response. It exits after 30 seconds with no work by default; increase `--idle-timeout` if preparing a demo slowly. `--max-tasks` bounds the number of claims processed by that process. A repeated assignment response must never trigger parallel execution of the same task.
+
+### Recovery demonstration
+
+1. Create a simulation job with one task.
+2. Run `python -m scripts.simulated_worker --name Crash-Test --crash-after-claim`.
+3. It exits with code 17 after claiming, without sending a result or more heartbeats.
+4. Run `python -m scripts.simulated_worker --name Survivor --max-tasks 1 --idle-timeout 60`.
+5. After the configured worker timeout (default 15 seconds) and recovery interval, Survivor receives the work and finishes it.
+
+To exercise explicit failures, use `--fail-tasks --max-tasks 3` on a new one-task simulation job. Three failed assignments exhaust retries and produce FAILED with no predictions. No database edits are needed for either demonstration.
+
+For another laptop, run the coordinator with `--host 0.0.0.0` and pass `--url http://<ABEL_LAN_IP>:8000` to the simulator. This checks the network/HTTP workflow only; final real inference still needs Kevin's worker.
+
+### Automated simulator verification
+
+`tests/test_simulator_postgres.py` starts a real HTTP server and separate worker processes against a uniquely named isolated PostgreSQL schema. It tests two workers completing 100 inputs, crash recovery without manually changing database rows, failure exhaustion, authorization, and stats counts. It drops only its generated test schema afterward. Set TEST_DATABASE_URL to opt in:
+
+```bash
+python -m pytest tests/test_simulator_postgres.py -q
+```
+
+Simulator milestone verification: 36 checks passed (32 existing unit/API checks, one deterministic offline-pull/upload-retry test, and three real HTTP/process/PostgreSQL scenarios). Crash recovery required no manual database edits. The simulator retries an offline/expired pull after refreshing its heartbeat and bounds retries by the idle timeout. No database migration was needed for stats or the simulator.

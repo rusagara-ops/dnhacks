@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.api.workers import router
 from app.api.jobs import router as jobs_router
 from app.api.tasks import router as tasks_router
+from app.api.stats import router as stats_router
 from app.services.recovery import recover_expired
 from app.core.config import Settings
 from app.db.database import make_engine, make_sessions
@@ -61,12 +62,13 @@ def create_app(settings: Settings | None = None):
             if engine:
                 engine.dispose()
 
-    app = FastAPI(title='DNhacks Coordinator', version='0.4.0', lifespan=lifespan)
+    app = FastAPI(title='DNhacks Coordinator', version='0.5.0', lifespan=lifespan)
     app.state.settings = settings
     app.state.sessions = None
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
                        allow_methods=['GET', 'POST'], allow_headers=['Content-Type', 'Authorization'])
     app.include_router(router, prefix='/api', dependencies=[Depends(require_token)])
+    app.include_router(stats_router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(tasks_router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(jobs_router, prefix='/api', dependencies=[Depends(require_token)])
 
