@@ -1,0 +1,23 @@
+from pathlib import Path
+
+from pydantic import Field, SecretStr, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parents[2] / '.env', extra='ignore'
+    )
+    database_url: SecretStr | None = None
+    api_token: SecretStr | None = None
+    cors_origins: list[str] = ['http://localhost:5173', 'http://127.0.0.1:5173']
+    heartbeat_interval_seconds: int = Field(default=5, ge=1)
+    worker_timeout_seconds: int = Field(default=15, ge=1)
+
+    @model_validator(mode='after')
+    def validate_timeout(self):
+        if self.worker_timeout_seconds <= self.heartbeat_interval_seconds:
+            raise ValueError('Worker timeout must be longer than the heartbeat interval')
+        if self.api_token is not None and not self.api_token.get_secret_value():
+            self.api_token = None
+        return self
