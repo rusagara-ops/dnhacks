@@ -1,0 +1,72 @@
+from contextlib import asynccontextmanager
+import logging
+import secrets
+
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.api.workers import router
+from app.core.config import Settings
+from app.db.database import make_engine, make_sessions
+
+logger = logging.getLogger(__name__)
+
+
+bearer = HTTPBearer(auto_error=False)
+
+
+def require_token(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
+    expected = request.app.state.settings.api_token
+    if expected and not secrets.compare_digest(
+        credentials.credentials if credentials else '', expected.get_secret_value()
+    ):
+        raise HTTPException(401, 'Invalid API token', headers={'WWW-Authenticate': 'Bearer'})
+
+
+def create_app(settings: Settings | None = None):
+    settings = settings or Settings()
+
+    @asynccontextmanager
+    async def lifespan(app):
+        engine = make_engine(settings.database_url.get_secret_value()) if settings.database_url else None
+        app.state.sessions = make_sessions(engine) if engine else None
+        try:
+            yield
+        finally:
+            if engine:
+                engine.dispose()
+
+    app = FastAPI(title='DNhacks Coordinator', version='0.1.0', lifespan=lifespan)
+    app.state.settings = settings
+    app.state.sessions = None
+    app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
+                       allow_methods=['GET', 'POST'], allow_headers=['Content-Type', 'Authorization'])
+    app.include_router(router, prefix='/api', dependencies=[Depends(require_token)])
+
+    @app.exception_handler(SQLAlchemyError)
+    async def database_error(request, exc):
+        # Do not return or log connection strings, query parameters, or database details.
+        logger.error('Database request failed: %s', type(exc).__name__)
+        return JSONResponse(status_code=503, content={'detail': 'Database unavailable or migrations missing'})
+
+    @app.get('/health', tags=['health'])
+    def health():
+        return {'status': 'ok'}
+
+    @app.get('/ready', tags=['health'])
+    def ready():
+        if app.state.sessions is None:
+            raise HTTPException(503, 'Database is not configured')
+        with app.state.sessions() as db:
+            db.execute(text('SELECT 1'))
+            db.execute(text('SELECT id FROM coordinator.workers LIMIT 0'))
+        return {'status': 'ok', 'database': 'ok'}
+
+    return app
+
+
+app = create_app()
