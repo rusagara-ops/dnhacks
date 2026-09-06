@@ -1,24 +1,94 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stranded Compute · Demo</title><link rel="stylesheet" href="/demo/vendor/leaflet/leaflet.css"><link rel="stylesheet" href="/demo/style.css"></head><body>
-<header><span class="brand">SC / STRANDED COMPUTE</span><span>LOCAL DEMO · MULTI-MODEL</span></header>
-<main><section class="intro"><p class="eyebrow">YOUR DOCUMENT. YOUR PRIVATE COMPUTE.</p><h1>Your tasks.<br>Your private compute.</h1><p>Summarize, ask questions, extract details, or get code help. Choose a model running on a connected computer and submit from any laptop.</p></section>
-<section class="connect"><label>Coordinator API token <input id="token" type="password" placeholder="Enter backend API_TOKEN" autocomplete="off"></label><button id="show-token" type="button">Show token</button><button id="connect">Connect</button><button id="disconnect" type="button" hidden>Disconnect</button><span id="connection" role="status">Not connected</span></section><p class="muted">Coordinator: <span id="coordinator-url"></span> · <label class="remember"><input id="remember-token" type="checkbox"> Remember token for this tab only</label></p>
-<section class="compute-explorer" aria-labelledby="explorer-title">
-<div class="section-title"><div><p class="eyebrow">EXPLORE THE NETWORK</p><h2 id="explorer-title">Find your compute</h2></div><span id="locations-count">Connect to explore</span></div>
-<p class="muted">Compare GPUs and models, and choose where your next job runs.</p>
-<aside id="location-invite" class="location-invite" aria-label="Location sharing"><div><strong>Find compute near you</strong><p>Share your approximate location for distance estimates. Your choice applies to this page only.</p></div><button id="share-location" type="button">Share location</button><button id="choose-location" class="subtle" type="button">Choose on map</button><button id="dismiss-location" class="subtle" type="button">Not now</button></aside>
-<div class="map-toolbar"><button id="change-location" class="subtle" type="button" hidden>Share location</button><button id="forget-location" class="subtle" type="button" hidden>Stop sharing</button><button id="fit-workers" class="subtle" type="button">Show all on this page</button></div>
-<p id="visitor-location-message" role="status" class="muted"></p>
-<p id="location-message" role="status" class="muted"></p>
-<div class="location-filters"><label class="remember"><input id="gpu-only" type="checkbox" checked>GPU machines only</label><label class="remember"><input id="online-only" type="checkbox">Online only</label><span id="distance-order" class="muted">Closest to coordinator → furthest</span></div>
-<div class="explorer-grid"><div><div id="compute-map" class="world-map" role="region" aria-label="Interactive compute map"></div><p id="tile-message" role="status" class="muted"></p><div class="map-legend"><span>● Online</span><span>● Offline</span><span>◆ Your area</span></div>
-<div id="map-location-editor" class="map-location-editor" hidden><p id="map-edit-help"></p><label id="site-name-field" hidden>Campus or city name<input id="site-name" maxlength="200" placeholder="e.g. Main campus"></label><label id="worker-location-confirm-field" class="remember" hidden><input id="worker-location-confirm" type="checkbox"> I manage this worker and confirm this is its location.</label><button id="pick-map-center" class="subtle" type="button">Choose map center</button><button id="save-map-location" type="button" disabled>Use this area</button><button id="cancel-map-location" class="subtle" type="button">Cancel</button></div>
-<p id="map-caption" class="muted">Locations appear when workers share them.</p><p class="route-note">Your browser → coordinator → selected worker → coordinator → your browser</p><p class="muted">Distances use your shared area, or the coordinator as a fallback. Proximity does not guarantee lower latency. Map tiles: OpenStreetMap.</p></div><div><div id="location-list" class="location-list"><p class="map-empty">Connect to explore registered compute.</p></div><div class="location-pagination"><button id="locations-prev" class="subtle" disabled>Previous</button><span id="locations-page" class="muted">0 machines</span><button id="locations-next" class="subtle" disabled>Next</button></div></div></div>
-<div class="worker-selection"><button id="automatic-worker" class="subtle" aria-pressed="true">Use automatic assignment</button><p id="selected-worker" role="status">Automatic: any online worker with the matching model can claim your job.</p></div>
-</section>
-<section><div class="section-title"><h2>Compute machines</h2><span id="online">— online</span></div><div id="workers" class="workers"><p>Connect to see workers.</p></div></section>
-<section><h2>Live activity</h2><div id="overview" class="overview"></div><div id="activity"><p>Connect to see task ownership and queue activity.</p></div></section><section><h2>Recent jobs</h2><div id="history"></div></section><section class="task-choice"><label for="mode">Choose a task</label><select id="mode">
-<option value="summarization">Summarize</option><option value="document-qa">Document Q&amp;A</option>
-<option value="information-extraction">Extract information</option><option value="coding-assistance">Coding assistance</option>
-</select><label for="model" class="model-label">Choose a model</label><select id="model" aria-describedby="model-help" disabled><option value="">Coordinator default</option></select><p id="model-help" class="muted" role="status">Connect to see available models.</p><p id="mode-help" class="muted">One coherent summary of your entire document.</p></section>
-<section class="workspace"><div class="panel"><div class="section-title"><h2 id="source-title">Source document</h2><button id="sample" class="subtle">Load example</button></div><label id="source-label" for="inputs">Paste the entire English document, including all its paragraphs.</label><textarea id="inputs" rows="13" placeholder="Paste an English document here…"></textarea><div id="instruction-field" hidden><label id="instruction-label" for="instruction">Question</label><textarea id="instruction" rows="3" maxlength="1000"></textarea></div><button id="submit" disabled>Summarize document →</button><p class="muted">Maximum 6,000 UTF-8 bytes of source; 6,500 including your request. AI output may contain mistakes. Code suggestions are never executed.</p></div>
-<div class="panel"><div class="section-title"><h2 id="result-title">Result</h2><span id="status">No job yet</span></div><progress id="progress" value="0" max="1"></progress><p id="job" class="muted">Submit a document to begin.</p><button id="download-result" class="subtle" disabled>Download result JSON</button><div id="results"><p class="empty">Each result will show its source Mac and runtime.</p></div></div></section><p id="error" role="alert"></p></main><script src="/demo/vendor/leaflet/leaflet.js"></script><script src="/demo/locations.js"></script><script src="/demo/app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Stranded Compute · Demo</title>
+  <link rel="stylesheet" href="/demo/style.css">
+</head>
+<body>
+  <header><span class="brand">SC / STRANDED COMPUTE</span><span>LOCAL DEMO · MULTI-MODEL</span></header>
+  <main>
+    <section class="intro">
+      <p class="eyebrow">YOUR DOCUMENT. YOUR PRIVATE COMPUTE.</p>
+      <h1>Your tasks.<br>Your private compute.</h1>
+      <p>Summarize, ask questions, extract details, or get code help. Choose a model running on a connected computer and submit from any laptop.</p>
+    </section>
+
+    <section class="connect">
+      <label>Coordinator API token <input id="token" type="password" placeholder="Enter backend API_TOKEN" autocomplete="off"></label>
+      <button id="show-token" type="button">Show token</button>
+      <button id="connect">Connect</button>
+      <button id="disconnect" type="button" hidden>Disconnect</button>
+      <span id="connection" role="status">Not connected</span>
+    </section>
+    <p class="muted">Coordinator: <span id="coordinator-url"></span> · <label class="remember"><input id="remember-token" type="checkbox"> Remember token for this tab only</label></p>
+
+    <section class="compute-explorer" aria-labelledby="explorer-title">
+      <div class="section-title">
+        <div><p class="eyebrow">COMPUTE DIRECTORY</p><h2 id="explorer-title">Choose where work runs</h2></div>
+        <span id="workers-match">Connect to see workers</span>
+      </div>
+      <p class="muted">Select a compatible machine or let the coordinator assign the best available worker. No location sharing is required.</p>
+      <div id="worker-picker" class="worker-picker"><p class="empty">Connect to see available compute.</p></div>
+      <div class="worker-selection">
+        <button id="automatic-worker" class="subtle" aria-pressed="true">Use automatic assignment</button>
+        <p id="selected-worker" role="status">Automatic: any online worker with the matching model can claim your job.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="machines-title">
+      <div class="section-title"><h2 id="machines-title">Compute machines</h2><span id="online">— online</span></div>
+      <div id="workers" class="workers"><p>Connect to see workers.</p></div>
+    </section>
+
+    <section class="telemetry" aria-labelledby="telemetry-title">
+      <div class="section-title">
+        <div><p class="eyebrow">COORDINATOR TELEMETRY</p><h2 id="telemetry-title">Work distribution</h2></div>
+        <span id="activity-updated">Waiting for a connection</span>
+      </div>
+      <p class="muted">Live ownership and execution data from the coordinator. Each task shows the computer that claimed it.</p>
+      <div id="overview" class="overview"></div>
+      <div id="distribution" class="distribution"><p class="empty">Connect to view task distribution.</p></div>
+      <div class="activity-heading"><h3>Recent task activity</h3><span class="muted">Newest first</span></div>
+      <div id="activity" class="activity-feed"><p>Connect to see task ownership and queue activity.</p></div>
+    </section>
+
+    <section><div class="section-title"><h2>Recent jobs</h2><span class="muted">Select one to inspect its results</span></div><div id="history"></div></section>
+
+    <section class="task-choice">
+      <label for="mode">Choose a task</label>
+      <select id="mode">
+        <option value="summarization">Summarize</option>
+        <option value="document-qa">Document Q&amp;A</option>
+        <option value="information-extraction">Extract information</option>
+        <option value="coding-assistance">Coding assistance</option>
+      </select>
+      <label for="model" class="model-label">Choose a model</label>
+      <select id="model" aria-describedby="model-help" disabled><option value="">Coordinator default</option></select>
+      <p id="model-help" class="muted" role="status">Connect to see available models.</p>
+      <p id="mode-help" class="muted">One coherent summary of your entire document.</p>
+    </section>
+
+    <section class="workspace">
+      <div class="panel">
+        <div class="section-title"><h2 id="source-title">Source document</h2><button id="sample" class="subtle">Load example</button></div>
+        <label id="source-label" for="inputs">Paste the entire English document, including all its paragraphs.</label>
+        <textarea id="inputs" rows="13" placeholder="Paste an English document here…"></textarea>
+        <div id="instruction-field" hidden><label id="instruction-label" for="instruction">Question</label><textarea id="instruction" rows="3" maxlength="1000"></textarea></div>
+        <button id="submit" disabled>Summarize document →</button>
+        <p class="muted">Maximum 6,000 UTF-8 bytes of source; 6,500 including your request. AI output may contain mistakes. Code suggestions are never executed.</p>
+      </div>
+      <div class="panel">
+        <div class="section-title"><h2 id="result-title">Result</h2><span id="status">No job yet</span></div>
+        <progress id="progress" value="0" max="1"></progress>
+        <p id="job" class="muted">Submit a document to begin.</p>
+        <button id="download-result" class="subtle" disabled>Download result JSON</button>
+        <div id="results"><p class="empty">Each result will show its source Mac and runtime.</p></div>
+      </div>
+    </section>
+    <p id="error" role="alert"></p>
+  </main>
+  <script src="/demo/app.js"></script>
+</body>
+</html>

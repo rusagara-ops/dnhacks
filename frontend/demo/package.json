@@ -6,8 +6,5 @@
   },
   "devDependencies": {
     "@playwright/test": "1.63.0"
-  },
-  "dependencies": {
-    "leaflet": "1.9.4"
   }
 }
