@@ -47,7 +47,9 @@ async function api(path, body) {
   });
   if (!response.ok) {
     const details = await response.json().catch(() => ({}));
-    throw Error(response.status === 401 ? 'Invalid API token.' : typeof details.detail === 'string' ? details.detail : `Coordinator request failed (${response.status}).`);
+    const error = Error(response.status === 401 ? 'Invalid API token.' : typeof details.detail === 'string' ? details.detail : `Coordinator request failed (${response.status}).`);
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
