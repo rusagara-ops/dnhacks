@@ -71,10 +71,9 @@
     <section class="workspace">
       <div class="panel">
         <div class="section-title"><h2 id="source-title">Source document</h2><button id="sample" class="subtle">Load example</button></div>
-        <label id="source-label" for="inputs">Paste the entire English document, including all its paragraphs.</label>
-        <textarea id="inputs" rows="13" placeholder="Paste an English document here…"></textarea>
+<fieldset class="source-choice"><legend>Document source</legend><label><input type="radio" name="source-kind" value="paste" checked> Paste text</label><label><input type="radio" name="source-kind" value="files"> Upload documents</label></fieldset><div id="upload-panel" hidden><label for="document-files">Add TXT or text-based PDF files</label><input id="document-files" type="file" accept=".txt,.pdf,text/plain,application/pdf" multiple><p class="muted">Up to 100 files, 10 MiB per file. Extracted text must fit 6,000 UTF-8 bytes per document. No OCR or silent truncation. Each whole document becomes one task and gets its own result.</p><p class="muted">Files are parsed in your browser. Only extracted text is sent when you submit. Preview PDF text to check reading order and completeness.</p><div id="document-list" aria-live="polite"></div><button id="clear-documents" type="button" class="subtle">Clear files</button><p id="upload-status" role="status"></p></div><div id="paste-panel"><label id="source-label" for="inputs">Paste the entire English document, including all its paragraphs.</label><textarea id="inputs" rows="13" placeholder="Paste an English document here…"></textarea></div>
         <div id="instruction-field" hidden><label id="instruction-label" for="instruction">Question</label><textarea id="instruction" rows="3" maxlength="1000"></textarea></div>
-        <button id="submit" disabled>Summarize document →</button>
+        <button id="retry-submission" type="button" class="subtle" hidden>I checked recent task activity — allow another submission</button><button id="submit" disabled>Summarize document →</button>
         <p class="muted">Maximum 6,000 UTF-8 bytes of source; 6,500 including your request. AI output may contain mistakes. Code suggestions are never executed.</p>
       </div>
       <div class="panel">
@@ -87,6 +86,7 @@
     </section>
     <p id="error" role="alert"></p>
   </main>
+  <script src="/demo/documents.js"></script>
   <script src="/demo/app.js"></script>
 </body>
 </html>
