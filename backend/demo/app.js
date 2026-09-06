@@ -1,5 +1,6 @@
 const $ = id => document.getElementById(id);
 let token = '', jobId = null, connected = false, polling = false, jobMode = 'summarization', connectionGeneration = 0, latestResult = null;
+const locations = new ComputeLocations(api, () => {});
 const example = `The city library is launching a three-month pilot to make its services easier to access. Starting in October, weekday closing time will move from 6 p.m. to 9 p.m. The change follows requests from residents who work during the day and need a quiet place to study in the evening.
 
 The pilot will also introduce a free digital skills workshop every Tuesday evening. Library staff will help participants use online job applications, create a basic resume, and access public services. Twelve computers will be available, and residents can reserve a place by phone or at the front desk.
@@ -22,7 +23,7 @@ function updateMode() {
   $('instruction-field').hidden = !['document-qa', 'coding-assistance'].includes(mode);
   $('instruction-label').textContent = coding ? 'What should we explain or fix? (optional)' : 'Question (required)';
 }
-$('mode').onchange = updateMode;
+$('mode').onchange = () => { updateMode(); locations.setMode($('mode').value); };
 function samples() {
   const mode = $('mode').value;
   $('inputs').value = mode === 'coding-assistance' ? 'def average(values):\n    return sum(values) / len(values)\n\nprint(average([]))' : example;
@@ -44,7 +45,10 @@ async function api(path, body) {
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body)
   });
-  if (!response.ok) throw Error(response.status === 401 ? 'Invalid API token.' : `Coordinator request failed (${response.status}).`);
+  if (!response.ok) {
+    const details = await response.json().catch(() => ({}));
+    throw Error(response.status === 401 ? 'Invalid API token.' : typeof details.detail === 'string' ? details.detail : `Coordinator request failed (${response.status}).`);
+  }
   return response.json();
 }
 function metric(card, label, value) {
@@ -119,6 +123,10 @@ function renderResults(data) {
       card.append(el(jobMode === 'coding-assistance' ? 'pre' : 'p', result?.text || (task.status === 'FAILED' ? 'Task failed after retries.' : 'Waiting for the result…')));
     }
     card.append(el('small', `${task.worker_name || 'Unassigned'}${task.execution_time_ms !== null ? ' · ' + (task.execution_time_ms / 1000).toFixed(1) + 's' : ''} · attempt ${task.attempt_count}`));
+    if (task.inference_metrics) {
+      const m = task.inference_metrics;
+      card.append(el('small', `Prompt tokens: ${m.prompt_tokens ?? 'unknown'} · Output tokens: ${m.output_tokens ?? 'unknown'} · Generation: ${m.generation_duration_ms === null ? 'unknown' : (m.generation_duration_ms / 1000).toFixed(2) + 's'} · ${m.tokens_per_second ?? 'unknown'} tokens/s`));
+    }
     $('results').append(card);
   }
 }
@@ -158,6 +166,8 @@ async function refresh() {
     const [workers, activity, jobs] = await Promise.all([api('/workers?limit=500'), api('/activity'), api('/jobs?limit=10')]);
     if (!connected || generation !== connectionGeneration) return;
     renderWorkers(workers, activity); renderActivity(activity, jobs);
+    await locations.refresh();
+    if (!connected || generation !== connectionGeneration) return;
     if (jobId) {
       const selectedJob = jobId;
       const result = await api(`/jobs/${selectedJob}/results`);
@@ -181,6 +191,7 @@ $('show-token').onclick = () => {
   $('show-token').textContent = show ? 'Hide token' : 'Show token';
 };
 $('disconnect').onclick = () => {
+  locations.disconnect();
   latestResult = null; $('download-result').disabled = true;
   connectionGeneration++; connected = false; token = ''; rememberToken('');
   $('token').value = ''; $('token').type = 'password'; $('show-token').textContent = 'Show token';
@@ -193,13 +204,13 @@ $('connect').onclick = async () => {
   $('connect').disabled = true;
   try {
     await api('/workers?limit=1');
-    connectionGeneration++; connected = true;
+    connectionGeneration++; connected = true; locations.connected = true; locations.version++;
     rememberToken($('remember-token').checked ? token : '');
     $('submit').disabled = false; $('disconnect').hidden = false;
     $('error').textContent = '';
     await refresh();
   } catch (error) {
-    connected = false; rememberToken(''); $('submit').disabled = true;
+    connected = false; locations.disconnect(); rememberToken(''); $('submit').disabled = true;
     $('connection').textContent = 'Not connected'; $('error').textContent = error.message;
   } finally { $('connect').disabled = false; }
 };
@@ -221,7 +232,7 @@ $('submit').onclick = async () => {
   $('submit').disabled = true;
   $('error').textContent = '';
   try {
-    const job = await api('/jobs', { task_type: mode, inputs: [document], optimization: 'fastest', ...(instruction ? {instruction} : {}) });
+    const job = await api('/jobs', { task_type: mode, inputs: [document], optimization: 'fastest', ...(locations.selected ? {target_worker_id: locations.selected} : {}), ...(instruction ? {instruction} : {}) });
     jobId = job.job_id;
     jobMode = mode;
     $('result-title').textContent = {summarization: 'Document summary', 'document-qa': 'Answer', 'information-extraction': 'Extracted information', 'coding-assistance': 'Code assistance'}[mode];

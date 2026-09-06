@@ -457,6 +457,8 @@ The dashboard adds recent jobs, result JSON download, connection status, show/hi
 
 See `backend/TEAM_HANDOFF.md` for Abel/Kevin/Ronald ownership and acceptance checks.
 
+See [GPU discovery and shared contract](../docs/COMPUTE_LOCATIONS.md) for optional worker locations, the map in `/demo/`, explicit job targeting, saved inference measurements, migration `a92e8f37d610`, and rollout/review notes.
+
 ### Backend-only connection and legacy-registration cleanup
 
 `GET /api/workers` now filters superseded offline legacy records before pagination. Add `include_history=true` for historical registrations. Modern device IDs are never collapsed by name or hostname. Old clients without device IDs reuse an exact hostname/name/model/revision registration under a transaction lock; upgrading to persistent device IDs is still preferred.

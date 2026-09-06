@@ -10,6 +10,7 @@ class JobCreateRequest(BaseModel):
     inputs: list[Annotated[str, Field(min_length=1, max_length=10000)]] = Field(min_length=1, max_length=1000)
     instruction: str | None = Field(default=None, min_length=1, max_length=1000)
     optimization: Literal['fastest'] = 'fastest'
+    target_worker_id: UUID | None = None
 
     @field_validator('inputs')
     @classmethod
@@ -36,6 +37,7 @@ class JobCreateRequest(BaseModel):
 class JobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
+    target_worker_id: UUID | None = None
     task_type: str
     model_id: str | None
     model_revision: str | None

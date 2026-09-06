@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 from typing import Literal, Annotated
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 class TaskInput(BaseModel):
@@ -56,7 +56,24 @@ class ExtractionResult(BaseModel):
     action_items: ExtractedItems
 
 
+class InferenceMetrics(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    prompt_tokens: int | None = Field(default=None, ge=0, strict=True)
+    output_tokens: int | None = Field(default=None, ge=0, strict=True)
+    generation_duration_ms: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+
+
+class ReportedInferenceMetrics(InferenceMetrics):
+    @computed_field
+    @property
+    def tokens_per_second(self) -> float | None:
+        if self.output_tokens is None or not self.generation_duration_ms:
+            return None
+        return round(self.output_tokens * 1000 / self.generation_duration_ms, 3)
+
+
 class TaskCompleteRequest(AssignmentRequest):
+    inference_metrics: InferenceMetrics | None = None
     results: list[Prediction | GeneratedText | ExtractionResult] = Field(min_length=1, max_length=25)
     execution_time_ms: Annotated[int, Field(ge=0, strict=True)]
 
@@ -83,6 +100,7 @@ class FailedTask(BaseModel):
 
 
 class TaskDetail(BaseModel):
+    inference_metrics: ReportedInferenceMetrics | None = None
     task_id: UUID
     input_start_index: int
     input_count: int

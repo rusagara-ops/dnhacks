@@ -13,7 +13,15 @@ class InputModel(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
 
 
+class WorkerLocation(InputModel):
+    site: Name
+    region: Name | None = None
+    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
+
+
 class WorkerRegisterRequest(InputModel):
+    location: WorkerLocation | None = None
     device_id: UUID | None = None
     name: Name
     hostname: Name
@@ -72,3 +80,18 @@ class WorkerResponse(WorkerRegisterRequest):
     last_heartbeat: datetime
     created_at: datetime
     updated_at: datetime
+
+
+class LocatedWorker(BaseModel):
+    worker: WorkerResponse
+    distance_km: float | None = None
+    compatible: bool
+
+
+class WorkerLocationsResponse(BaseModel):
+    items: list[LocatedWorker]
+    total: int
+    limit: int
+    offset: int
+    distance_kind: Literal['great_circle'] = 'great_circle'
+    distance_reference: Literal['coordinator', 'request', 'unavailable'] = 'unavailable'
