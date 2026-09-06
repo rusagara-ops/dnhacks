@@ -279,7 +279,7 @@ async function refresh() {
   } finally { polling = false; }
 }
 function rememberToken(value) {
-  try { if (value) sessionStorage.setItem('coordinatorToken', value); else sessionStorage.removeItem('coordinatorToken'); }
+  try { if (value) localStorage.setItem('dnhacksDemoToken', value); else localStorage.removeItem('dnhacksDemoToken'); }
   catch { /* Connection still works when browser storage is unavailable. */ }
 }
 $('coordinator-url').textContent = location.origin;
@@ -311,9 +311,8 @@ $('connect').onclick = async () => {
     await api('/workers?limit=1');
     connectionGeneration++; connected = true; locations.connected = true; locations.version++;
     clearCreditQuote(); ambiguousSubmission = false; $('allow-resubmit').hidden = true;
-    if (identity?.auth_mode === 'controlled') { $('remember-token').checked = false; $('token').value = ''; }
-    $('remember-token').disabled = identity?.auth_mode === 'controlled';
-    rememberToken($('remember-token').checked ? token : '');
+    $('remember-token').checked = true; $('remember-token').disabled = false;
+    rememberToken(token);
     $('submit').disabled = false; $('disconnect').hidden = false;
     $('error').textContent = '';
     await refresh();
@@ -324,7 +323,7 @@ $('connect').onclick = async () => {
 };
 $('token').addEventListener('keydown', event => { if (event.key === 'Enter') $('connect').click(); });
 try {
-  const saved = sessionStorage.getItem('coordinatorToken');
+  const saved = localStorage.getItem('dnhacksDemoToken');
   if (saved) { $('token').value = saved; $('remember-token').checked = true; $('connect').click(); }
 } catch { /* Storage is optional. */ }
 $('submit').onclick = async () => {
