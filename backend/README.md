@@ -1,5 +1,7 @@
 # Abel — Coordinator Backend
 
+> This backend/worker branch excludes the demo UI. References to `/demo/` describe the companion UI on `abel-backend`; use `/docs` to inspect these APIs independently.
+
 Owner: Abel. The coordinator runs on Abel's laptop for the demo. It manages worker presence, jobs, task assignment, retries and results. Kevin's worker performs inference; Ronald's frontend calls this HTTP API. Neither teammate needs the database password.
 
 ## Current implementation (v0.5)

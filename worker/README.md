@@ -1,5 +1,7 @@
 # Gemma remote-compute worker
 
+> This backend/worker branch excludes the demo UI. References to `/demo/` describe the companion UI on `abel-backend`; use `/docs` to inspect these APIs independently.
+
 Abel's 24 GB Mac runs **Gemma 3 12B through Ollama**. Other laptops use the coordinator dashboard in a browser; they do not need Python, Ollama, a model download, or a running worker. This is remote inference on one compute host. Requests are queued and each worker handles one task at a time.
 
 ## Start on the compute Mac
