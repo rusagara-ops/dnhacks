@@ -2,7 +2,7 @@ from datetime import timedelta
 from fastapi import HTTPException
 from sqlalchemy import select, func
 from app.models import Worker, Task, Job, TaskResult
-from app.schemas.task import TaskMutationResponse, JobResultResponse, FailedTask
+from app.schemas.task import TaskMutationResponse, JobResultResponse, FailedTask, GeneratedText, Prediction, TaskDetail, ExtractionResult
 
 ACTIVE = ['ASSIGNED', 'RUNNING']
 
@@ -43,6 +43,9 @@ def complete_task(db, task_id, payload):
         if len(received) != len(expected) or set(received) != expected:
             raise HTTPException(422, 'Return exactly one prediction for every assigned input index')
         job = db.scalar(select(Job).where(Job.id == task.job_id).with_for_update())
+        expected_type = {'sentiment-classification': Prediction, 'information-extraction': ExtractionResult}.get(job.task_type, GeneratedText)
+        if any(not isinstance(item, expected_type) for item in payload.results):
+            raise HTTPException(422, 'Result format does not match the job task type')
         db.add(TaskResult(task_id=task.id, worker_id=worker.id,
                           result=[p.model_dump() for p in payload.results], execution_time_ms=payload.execution_time_ms))
         task.status = 'COMPLETED'
@@ -103,6 +106,15 @@ def renew_heartbeat(db, worker_id, payload, settings):
             expiry = min(now + timedelta(seconds=settings.task_lease_seconds), deadline)
             task.lease_expires_at = expiry
             task.status = 'RUNNING'
+        if payload.ram_available_gb is not None and payload.ram_available_gb > worker.ram_gb:
+            raise HTTPException(422, 'Available RAM exceeds total RAM')
+        if worker.gpu_memory_kind == 'unified' and payload.gpu_available_gb is not None:
+            raise HTTPException(422, 'Unified memory has no separate available GPU memory pool')
+        if payload.gpu_available_gb is not None and worker.gpu_memory_gb is not None and payload.gpu_available_gb > worker.gpu_memory_gb:
+            raise HTTPException(422, 'Available GPU memory exceeds total GPU memory')
+        worker.ram_available_gb = payload.ram_available_gb
+        worker.gpu_available_gb = payload.gpu_available_gb
+        worker.gpu_model_memory_gb = payload.gpu_model_memory_gb
         worker.cpu_utilization = payload.cpu_utilization
         worker.memory_utilization = payload.memory_utilization
         worker.active_tasks = payload.active_tasks
@@ -118,6 +130,12 @@ def job_results(db, job_id):
             raise HTTPException(404, 'Job not found')
         rows = db.execute(select(Task, TaskResult).outerjoin(TaskResult, TaskResult.task_id == Task.id)
                           .where(Task.job_id == job.id).order_by(Task.start_index)).all()
+        worker_ids = {t.assigned_worker_id for t, r in rows if t.assigned_worker_id}
+        names = dict(db.execute(select(Worker.id, Worker.name).where(Worker.id.in_(worker_ids))).all())
+        details = [TaskDetail(task_id=t.id, input_start_index=t.start_index, input_count=t.input_count,
+                              status=t.status, worker_id=t.assigned_worker_id,
+                              worker_name=names.get(t.assigned_worker_id), attempt_count=t.attempt_count,
+                              execution_time_ms=r.execution_time_ms if r else None) for t, r in rows]
         predictions = [p for task, result in rows if result for p in result.result]
         failures = [FailedTask(task_id=t.id, input_start_index=t.start_index, input_count=t.input_count,
                                error_code=(t.last_error or {}).get('code', 'RETRY_LIMIT_EXCEEDED'))
@@ -125,4 +143,4 @@ def job_results(db, job_id):
         return JobResultResponse(job_id=job.id, status=job.status, is_final=job.status in ['COMPLETED','FAILED'],
                                  total_inputs=job.total_inputs, completed_inputs=len(predictions),
                                  failed_inputs=sum(t.input_count for t in failures),
-                                 results=sorted(predictions, key=lambda p:p['index']), failed_tasks=failures)
+                                 results=sorted(predictions, key=lambda p:p['index']), failed_tasks=failures, tasks=details)

@@ -1,5 +1,7 @@
 # Abel — Coordinator Backend
 
+> This backend/worker branch excludes the demo UI. References to `/demo/` describe the companion UI on `abel-backend`; use `/docs` to inspect these APIs independently.
+
 Owner: Abel. The coordinator runs on Abel's laptop for the demo. It manages worker presence, jobs, task assignment, retries and results. Kevin's worker performs inference; Ronald's frontend calls this HTTP API. Neither teammate needs the database password.
 
 ## Current implementation (v0.5)
@@ -381,3 +383,76 @@ python -m pytest tests/test_simulator_postgres.py -q
 ```
 
 Simulator milestone verification: 36 checks passed (32 existing unit/API checks, one deterministic offline-pull/upload-retry test, and three real HTTP/process/PostgreSQL scenarios). Crash recovery required no manual database edits. The simulator retries an offline/expired pull after refreshing its heartbeat and bounds retries by the idle timeout. No database migration was needed for stats or the simulator.
+
+## Gemma remote-compute demo (abel-backend)
+
+Abel's Mac runs the coordinator and one Gemma 3 12B worker; client laptops open `/demo/` remotely. The temporary dashboard is in `backend/demo/`, separate from Ronald's `frontend/`. See `worker/README.md` for startup, model download, GPU verification, and client instructions.
+
+From `backend/`, start the coordinator with:
+
+```sh
+.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+In `backend/.env`, preserve `DATABASE_URL` and `API_TOKEN`; set `INFERENCE_MODEL_ID=gemma3:12b` and `INFERENCE_MODEL_REVISION` to the installed model's full Ollama digest from `/api/tags`. Restart the backend after changes. Never commit `.env`.
+
+### API contract for teammate agents
+
+`POST /api/jobs` accepts `task_type: "summarization"` and `inputs: [document]`. Paragraph breaks are preserved. The dashboard submits the entire document as one input, producing one summary paragraph. Each input is limited to 6,000 UTF-8 bytes; the server rejects longer documents. Batch API clients can still send multiple independent documents. Each document is one task; sentiment tasks retain 25-input chunks.
+
+`POST /api/tasks/{task_id}/complete` accepts summary `{index,text}` results and validates their shape against the job type. Existing sentiment `{index,label,score}` results remain supported. Jobs pin model ID and revision at creation.
+
+`GET /api/jobs/{job_id}/results` includes summary results plus a `tasks` array containing task ID, input start index/count, status, worker ID/name, attempt count and execution time. The worker identity is the current/final owner, not a full attempt history.
+
+The existing three-attempt retry and partial-result behavior is unchanged: once all tasks finish, any permanently failed task makes the job `FAILED`, with successful results retained.
+
+### Resource reporting
+
+Migration `47bc91eea204` adds nullable worker fields, preserving compatibility with old workers. Run migrations before starting the updated backend.
+
+Registration adds `gpu_core_count` and `gpu_memory_kind` (`unified`, `dedicated`, or `unknown`). Total RAM remains `ram_gb`; GPU identity is `gpu`. For Apple Silicon, `gpu_memory_gb` is null because GPU memory is shared with RAM.
+
+Heartbeats add `ram_available_gb`, `gpu_available_gb`, and `gpu_model_memory_gb`; `/api/workers` returns them. Units are GiB despite the legacy `_gb` names. Missing telemetry is null. Available RAM cannot exceed registered total RAM. Unified-memory workers cannot report a separate available GPU pool. `gpu_model_memory_gb` comes from Ollama's model allocation, not a whole-system GPU usage meter.
+
+The dashboard refreshes every two seconds; measurements update at the configured worker heartbeat interval. Offline worker availability is shown as unavailable. The scheduler still assigns one matching task at a time; these metrics are observability, not memory-based admission control.
+
+### Verification
+
+Check `/ready`, verify the Gemma worker is online, submit a multi-paragraph document, and confirm a single summary with persisted worker attribution and runtime. Verify GPU placement using Ollama, and compare available-memory readings over successive heartbeats. Browser clients need only the coordinator token, never database credentials.
+
+## Document Q&A, extraction, and coding assistance
+
+The demo now offers four task choices. All use the same pinned Gemma model, existing HTTP queue, result storage, retry logic, and heartbeat telemetry. No new migration is required for these task types; instructions are stored in each task's existing JSON payload.
+
+Use `POST /api/jobs` with `inputs: [source]` and one of:
+
+- `summarization`: unchanged; returns `{index,text}`.
+- `document-qa`: requires a nonblank `instruction` containing the question; returns `{index,text}`. The prompt asks for document-grounded answers and an explicit missing-information response.
+- `information-extraction`: returns `{index,names,dates,amounts,action_items}`. Every category is an array of strings, empty when nothing is found. Each array has at most 20 items; each item at most 300 characters. The worker uses Ollama structured output, validates it locally, and the coordinator validates it again before persistence.
+- `coding-assistance`: optional `instruction` describing the requested explanation or bug fix; defaults to explaining the code and identifying likely bugs. Returns `{index,text}` with whitespace and code fences preserved. Code is never executed.
+
+Example Q&A request:
+
+```json
+{
+  "task_type": "document-qa",
+  "inputs": ["The approved project budget is $18,000."],
+  "instruction": "What is the approved budget?"
+}
+```
+
+`instruction` is rejected for summary, extraction, and sentiment tasks. For Q&A/coding it is limited to 1,000 characters; each source is limited to 6,000 UTF-8 bytes, with a combined source-plus-instruction limit of 6,500 bytes. Assignments include optional `instruction`, captured at job creation. A batch shares the instruction across its independent inputs.
+
+Workers advertise all supported task types at registration. Existing workers must restart to advertise the new capabilities. Result rendering uses text nodes, so model-generated HTML and code are displayed without execution. The task selector does not replace pasted content; use **Load example** to deliberately load a sample for the selected mode.
+
+Generation limits: 320 tokens for summary/Q&A, 512 for extraction, 700 for coding assistance; context remains 8,192 tokens and temperature 0. Incomplete generation and malformed structured output follow the existing failure/retry flow. These limits bound the demo, not the model's full capabilities. Factual grounding is prompted and tested with examples, not guaranteed.
+
+## Reconnect identity and activity dashboard
+
+Migration `78ccab156bc1` adds a nullable unique `workers.device_id`. Updated workers send a persisted UUID. Registration performs a PostgreSQL upsert and preserves active assignments and counters. Legacy clients without an ID remain compatible. Existing historical worker rows are not deleted. The demo suppresses redundant offline legacy hostname entries and uses distinct modern device IDs, so two distinct modern devices sharing a display name stay separate.
+
+`GET /api/activity` exposes authenticated current ownership (up to 100 active tasks), the 30 most recently created tasks, task-state totals, retries, and per-worker completed-task/input counts with average execution milliseconds. Historical metrics span retained data; they are not a real-time throughput benchmark. Queue seconds for retries include prior attempts, and elapsed seconds are for the current/latest attempt. All metric requests remain read-only.
+
+The dashboard adds recent jobs, result JSON download, connection status, show/hide token, Enter-to-connect, optional sessionStorage remembering, and Disconnect. Remembering is opt-in and tab-scoped; Disconnect removes the stored token. The token is never put in a URL or downloaded result.
+
+See `backend/TEAM_HANDOFF.md` for Abel/Kevin/Ronald ownership and acceptance checks.

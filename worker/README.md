@@ -1,1 +1,83 @@
+# Gemma remote-compute worker
 
+> This backend/worker branch excludes the demo UI. References to `/demo/` describe the companion UI on `abel-backend`; use `/docs` to inspect these APIs independently.
+
+Abel's 24 GB Mac runs **Gemma 3 12B through Ollama**. Other laptops use the coordinator dashboard in a browser; they do not need Python, Ollama, a model download, or a running worker. This is remote inference on one compute host. Requests are queued and each worker handles one task at a time.
+
+## Start on the compute Mac
+
+Install Ollama for macOS and Python 3.12. From the repository root:
+
+```sh
+python3.12 -m venv worker/.venv
+worker/.venv/bin/python -m pip install -r worker/requirements.txt
+```
+
+Start `worker/start-ollama.command` in Terminal. It sets one loaded model, one concurrent inference, an 8,192-token context, and a loopback-only Ollama server. On Abel's machine the runtime was downloaded to `worker/.cache/ollama/`; elsewhere it uses an installed `ollama` command. Model weights are stored in `worker/.cache/ollama-models/`.
+
+In another terminal, download the model once:
+
+```sh
+ollama pull gemma3:12b
+```
+
+For the repository-local runtime on Abel's Mac, use `worker/.cache/ollama/ollama pull gemma3:12b` instead. Allow approximately 8.1 GB for weights plus runtime files and working memory. Do not start a second Ollama server on the same port.
+
+Read the installed model's full `digest` from `http://127.0.0.1:11434/api/tags`. Configure `backend/.env` with `INFERENCE_MODEL_ID=gemma3:12b` and that digest as `INFERENCE_MODEL_REVISION`, preserving the existing database URL and API token. Restart the coordinator after changing these values. The worker advertises the installed digest; mismatched jobs are not claimed.
+
+Enter the same coordinator API token privately in zsh:
+
+```sh
+read -s "API_TOKEN?Coordinator API token: "
+export API_TOKEN
+echo
+worker/.venv/bin/python worker/run.py --url http://127.0.0.1:8000 --name Abel-Mac
+```
+
+Hardware capacity is detected automatically. The old `--ram-gb` flag has been removed. Model warmup happens before registration. Inference runs off the heartbeat loop; heartbeats continue while generating. Stop with Ctrl+C. Restarting creates a new registration, so old records may remain offline.
+
+## Client laptops
+
+Open `http://ABEL_LAN_IP:8000/demo/` and enter the coordinator API token. Paste the entire document and click **Summarize document**. Keep the computers on a network that permits connectivity. Clients must use Abel's address, not `localhost`. Stop old Qwen workers on the client laptops.
+
+## Summary contract
+
+- `task_type`: `summarization`.
+- `model_id`: `gemma3:12b`; revision is the installed Ollama manifest digest.
+- Each input is a complete document, preserving paragraph breaks.
+- Demo dashboard submits `inputs: [document]`, so one document produces one summary.
+- Limit: 6,000 UTF-8 bytes per document, rejected rather than silently truncated.
+- Context: 8,192 tokens; maximum generated output: 320 tokens; temperature: 0.
+- Prompt requests a coherent paragraph of approximately 100–150 words, or fewer for short sources.
+- Result: `{ "index": 0, "text": "The document summary." }`.
+- A generation that reaches the output limit is treated as incomplete and reported as failure, not stored as a successful truncated summary.
+
+The API still supports a batch of separate documents; these produce separate summaries. Existing sentiment jobs and results remain compatible. Model output is untrusted text and the dashboard renders it as text, never HTML.
+
+## RAM and GPU telemetry
+
+All API fields ending in `_gb` use binary GiB (bytes divided by 1024³); the dashboard labels units explicitly.
+
+Registration detects total RAM, GPU name, GPU core count, and whether memory is unified. Heartbeats update `ram_available_gb`, `cpu_utilization`, `memory_utilization`, and `gpu_model_memory_gb` (Ollama's reported GPU allocation for this model).
+
+Apple Silicon uses one shared memory pool. `gpu_memory_gb` and `gpu_available_gb` remain null instead of inventing separate VRAM. The dashboard shows available shared RAM as an estimate and states that it is not a guaranteed GPU allocation budget. Free GPU cores/utilization are not reported. Offline or unsupported live measurements show unavailable, not zero.
+
+Use `ollama ps` to verify GPU placement. Detecting the GPU name alone does not prove the model is GPU accelerated. The Gemma worker requires a positive Ollama GPU allocation after warmup before registering. If a sandbox-launched server sees only CPU, stop that server and start `worker/start-ollama.command` in normal Terminal, then verify again.
+
+## Tests
+
+Backend tests cover shape validation, exact model identity, full-document forwarding, output truncation rejection, and persisted heartbeat telemetry. The opt-in `RUN_REAL_MODEL_TEST=1` test requires the downloaded model, a running Ollama server, the worker environment, and `TEST_DATABASE_URL`. It uses an isolated temporary schema. Physical client-to-host connectivity must also be tested separately.
+
+## Additional task modes
+
+This worker now advertises `summarization`, `document-qa`, `information-extraction`, and `coding-assistance`. Restart an older worker to register the new capabilities. All modes reuse Gemma and keep one assignment active at a time.
+
+Q&A uses the assignment's `instruction` as its question, asks for answers grounded in the source, and returns a missing-information response when appropriate. Coding assistance accepts an optional request and preserves code formatting; it never runs the supplied or generated code. Extraction uses a JSON schema and returns arrays for `names`, `dates`, `amounts`, and `action_items`; malformed output is reported as an inference failure.
+
+The source limit remains 6,000 UTF-8 bytes. Source plus instruction must fit within 6,500 bytes. Output budgets are 320 tokens for summary/Q&A, 512 for extraction, and 700 for coding. These are selected automatically by task type. Model output is still fallible; inspect important answers and suggested fixes.
+
+See the backend README for request and response examples. `tests/test_real_modes_postgres.py` is an opt-in test covering known-answer Q&A, missing-answer Q&A, structured extraction, and code help through real GPU inference and persisted results.
+
+## Stable reconnects
+
+Worker identity is persisted in `.cache/device-id` and sent as `device_id` during registration. Restarting reuses the same database worker ID and retains task history. Do not delete or copy this file to another machine. A local `.cache/worker.lock` prevents simultaneous worker processes from the same installation. For isolated tests only, `WORKER_STATE_DIR` selects a separate state directory. Existing legacy registrations remain in the database for historical attribution; the demo hides redundant offline legacy cards.

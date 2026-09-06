@@ -2,6 +2,8 @@ from contextlib import asynccontextmanager
 import asyncio
 import logging
 import secrets
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +16,7 @@ from app.api.workers import router
 from app.api.jobs import router as jobs_router
 from app.api.tasks import router as tasks_router
 from app.api.stats import router as stats_router
+from app.api.activity import router as activity_router
 from app.services.recovery import recover_expired
 from app.core.config import Settings
 from app.db.database import make_engine, make_sessions
@@ -68,6 +71,7 @@ def create_app(settings: Settings | None = None):
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
                        allow_methods=['GET', 'POST'], allow_headers=['Content-Type', 'Authorization'])
     app.include_router(router, prefix='/api', dependencies=[Depends(require_token)])
+    app.include_router(activity_router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(stats_router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(tasks_router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(jobs_router, prefix='/api', dependencies=[Depends(require_token)])
@@ -88,12 +92,15 @@ def create_app(settings: Settings | None = None):
             raise HTTPException(503, 'Database is not configured')
         with app.state.sessions() as db:
             db.execute(text('SELECT 1'))
-            db.execute(text('SELECT id FROM coordinator.workers LIMIT 0'))
+            db.execute(text('SELECT id, device_id, ram_available_gb, gpu_core_count, gpu_memory_kind, gpu_available_gb, gpu_model_memory_gb FROM coordinator.workers LIMIT 0'))
             db.execute(text('SELECT id, model_id, model_revision FROM coordinator.jobs LIMIT 0'))
             db.execute(text('SELECT id, last_error FROM coordinator.tasks LIMIT 0'))
             db.execute(text('SELECT task_id FROM coordinator.task_results LIMIT 0'))
         return {'status': 'ok', 'database': 'ok'}
 
+    demo_directory = Path(__file__).resolve().parents[1] / 'demo'
+    if demo_directory.is_dir():
+        app.mount('/demo', StaticFiles(directory=demo_directory, html=True), name='demo')
     return app
 
 

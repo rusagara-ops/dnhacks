@@ -14,7 +14,7 @@ def assignment_response(task, job):
         task_id=task.id, job_id=job.id, assignment_id=task.assignment_id,
         lease_expires_at=task.lease_expires_at, task_type=job.task_type,
         model_id=job.model_id, model_revision=job.model_revision,
-        inputs=task.payload['inputs'],
+        inputs=task.payload['inputs'], instruction=task.payload.get('instruction'),
     ))
 
 

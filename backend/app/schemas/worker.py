@@ -14,6 +14,7 @@ class InputModel(BaseModel):
 
 
 class WorkerRegisterRequest(InputModel):
+    device_id: UUID | None = None
     name: Name
     hostname: Name
     cpu: Name
@@ -21,7 +22,9 @@ class WorkerRegisterRequest(InputModel):
     ram_gb: Positive
     gpu: Name | None = None
     gpu_memory_gb: float | None = Field(default=None, ge=0, allow_inf_nan=False)
-    supported_tasks: list[Literal['sentiment-classification']] = Field(min_length=1, max_length=1)
+    gpu_core_count: int | None = Field(default=None, gt=0, le=4096)
+    gpu_memory_kind: Literal['unified', 'dedicated', 'unknown'] | None = None
+    supported_tasks: list[Literal['sentiment-classification', 'summarization', 'document-qa', 'information-extraction', 'coding-assistance']] = Field(min_length=1, max_length=5)
     model_id: Name | None = None
     model_revision: Name | None = None
     benchmark_score: Positive = 1
@@ -44,6 +47,9 @@ class HeartbeatRequest(InputModel):
             raise ValueError('An assignment heartbeat requires active_tasks=1')
         return self
 
+    ram_available_gb: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    gpu_available_gb: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    gpu_model_memory_gb: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     cpu_utilization: Percent
     memory_utilization: Percent
     active_tasks: int = Field(ge=0, le=1)
@@ -57,6 +63,9 @@ class HeartbeatResponse(BaseModel):
 class WorkerResponse(WorkerRegisterRequest):
     id: UUID
     status: Literal['AVAILABLE', 'BUSY', 'OFFLINE']
+    ram_available_gb: float | None = None
+    gpu_available_gb: float | None = None
+    gpu_model_memory_gb: float | None = None
     cpu_utilization: float
     memory_utilization: float
     active_tasks: int
