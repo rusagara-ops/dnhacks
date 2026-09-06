@@ -75,3 +75,7 @@ Q&A uses the assignment's `instruction` as its question, asks for answers ground
 The source limit remains 6,000 UTF-8 bytes. Source plus instruction must fit within 6,500 bytes. Output budgets are 320 tokens for summary/Q&A, 512 for extraction, and 700 for coding. These are selected automatically by task type. Model output is still fallible; inspect important answers and suggested fixes.
 
 See the backend README for request and response examples. `tests/test_real_modes_postgres.py` is an opt-in test covering known-answer Q&A, missing-answer Q&A, structured extraction, and code help through real GPU inference and persisted results.
+
+## Stable reconnects
+
+Worker identity is persisted in `.cache/device-id` and sent as `device_id` during registration. Restarting reuses the same database worker ID and retains task history. Do not delete or copy this file to another machine. A local `.cache/worker.lock` prevents simultaneous worker processes from the same installation. For isolated tests only, `WORKER_STATE_DIR` selects a separate state directory. Existing legacy registrations remain in the database for historical attribution; the demo hides redundant offline legacy cards.

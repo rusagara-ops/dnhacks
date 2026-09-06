@@ -444,3 +444,13 @@ Example Q&A request:
 Workers advertise all supported task types at registration. Existing workers must restart to advertise the new capabilities. Result rendering uses text nodes, so model-generated HTML and code are displayed without execution. The task selector does not replace pasted content; use **Load example** to deliberately load a sample for the selected mode.
 
 Generation limits: 320 tokens for summary/Q&A, 512 for extraction, 700 for coding assistance; context remains 8,192 tokens and temperature 0. Incomplete generation and malformed structured output follow the existing failure/retry flow. These limits bound the demo, not the model's full capabilities. Factual grounding is prompted and tested with examples, not guaranteed.
+
+## Reconnect identity and activity dashboard
+
+Migration `78ccab156bc1` adds a nullable unique `workers.device_id`. Updated workers send a persisted UUID. Registration performs a PostgreSQL upsert and preserves active assignments and counters. Legacy clients without an ID remain compatible. Existing historical worker rows are not deleted. The demo suppresses redundant offline legacy hostname entries and uses distinct modern device IDs, so two distinct modern devices sharing a display name stay separate.
+
+`GET /api/activity` exposes authenticated current ownership (up to 100 active tasks), the 30 most recently created tasks, task-state totals, retries, and per-worker completed-task/input counts with average execution milliseconds. Historical metrics span retained data; they are not a real-time throughput benchmark. Queue seconds for retries include prior attempts, and elapsed seconds are for the current/latest attempt. All metric requests remain read-only.
+
+The dashboard adds recent jobs, result JSON download, connection status, show/hide token, Enter-to-connect, optional sessionStorage remembering, and Disconnect. Remembering is opt-in and tab-scoped; Disconnect removes the stored token. The token is never put in a URL or downloaded result.
+
+See `backend/TEAM_HANDOFF.md` for Abel/Kevin/Ronald ownership and acceptance checks.

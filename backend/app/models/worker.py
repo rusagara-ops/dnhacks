@@ -25,6 +25,7 @@ class Worker(Base):
         {'schema': 'coordinator'},
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    device_id: Mapped[UUID | None] = mapped_column(unique=True)
     name: Mapped[str] = mapped_column(Text)
     hostname: Mapped[str] = mapped_column(Text)
     cpu: Mapped[str] = mapped_column(Text)

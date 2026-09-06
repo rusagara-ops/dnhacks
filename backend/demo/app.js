@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-let token = '', jobId = null, connected = false, polling = false, jobMode = 'summarization';
+let token = '', jobId = null, connected = false, polling = false, jobMode = 'summarization', connectionGeneration = 0, latestResult = null;
 const example = `The city library is launching a three-month pilot to make its services easier to access. Starting in October, weekday closing time will move from 6 p.m. to 9 p.m. The change follows requests from residents who work during the day and need a quiet place to study in the evening.
 
 The pilot will also introduce a free digital skills workshop every Tuesday evening. Library staff will help participants use online job applications, create a basic resume, and access public services. Twelve computers will be available, and residents can reserve a place by phone or at the front desk.
@@ -52,15 +52,34 @@ function metric(card, label, value) {
   row.append(el('span', label), el('strong', value));
   card.append(row);
 }
-function renderWorkers(workers) {
-  const relevant = workers.filter(w => w.supported_tasks.includes('summarization') && w.model_id === 'gemma3:12b');
+function renderWorkers(workers, activity) {
+  const candidates = workers.filter(w => w.supported_tasks.includes('summarization') && w.model_id === 'gemma3:12b');
+  const modernHosts = new Set(candidates.filter(w => w.device_id).map(w => w.hostname));
+  const seen = new Set();
+  const relevant = candidates.filter(w => {
+    if (!w.device_id && modernHosts.has(w.hostname) && w.status === 'OFFLINE') return false;
+    const key = w.device_id || `legacy:${w.hostname}`;
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  });
   $('workers').replaceChildren();
   for (const w of relevant) {
     const card = el('article', undefined, 'worker');
     const online = w.status !== 'OFFLINE';
     const shared = w.gpu_memory_kind === 'unified';
     card.append(el('strong', w.name), el('span', w.status, 'badge'));
-    metric(card, 'Total RAM', gib(w.ram_gb));
+    const tasks = activity.active_tasks.filter(t => t.worker_id === w.id);
+    const metrics = activity.worker_metrics.find(m => m.worker_id === w.id);
+    metric(card, 'Current task', tasks.length ? tasks.map(t => `${t.task_type} · ${t.elapsed_seconds}s`).join(', ') : online ? 'Idle' : 'Offline');
+    for (const task of tasks) {
+      const link = el('button', `View job ${task.job_id.slice(0, 8)}`, 'subtle');
+      link.onclick = () => openJob(task.job_id, task.task_type); card.append(link);
+    }
+    metric(card, 'Completed tasks', String(metrics?.completed_tasks || 0));
+    metric(card, 'Average execution', metrics ? `${(metrics.average_execution_ms / 1000).toFixed(1)}s` : 'No completed tasks');
+    metric(card, 'CPU usage', online ? `${w.cpu_utilization.toFixed(1)}%` : 'Unavailable');
+    metric(card, 'RAM usage', online ? `${w.memory_utilization.toFixed(1)}%` : 'Unavailable');
+    metric(card, 'Total RAM' , gib(w.ram_gb));
     metric(card, 'Available RAM', online ? gib(w.ram_available_gb) : 'Offline — unavailable');
     metric(card, 'Total GPU', `${w.gpu || 'Not reported'}${w.gpu_core_count ? ` · ${w.gpu_core_count} cores` : ''}`);
     metric(card, 'GPU memory', shared ? `Shares ${gib(w.ram_gb)} system RAM` : gib(w.gpu_memory_gb));
@@ -77,6 +96,7 @@ function renderWorkers(workers) {
   $('online').textContent = `${relevant.filter(w => w.status !== 'OFFLINE').length} online`;
 }
 function renderResults(data) {
+  latestResult = data; $('download-result').disabled = false;
   $('status').textContent = data.status;
   $('progress').max = data.total_inputs;
   $('progress').value = data.completed_inputs + data.failed_inputs;
@@ -102,33 +122,92 @@ function renderResults(data) {
     $('results').append(card);
   }
 }
+async function openJob(id, mode) {
+  jobId = id; jobMode = mode;
+  $('result-title').textContent = mode;
+  try { const result = await api(`/jobs/${id}/results`); if (connected && jobId === id) renderResults(result); }
+  catch (error) { $('error').textContent = error.message; }
+}
+function renderActivity(data, jobs) {
+  $('overview').replaceChildren();
+  for (const [label, value] of Object.entries({Queued: data.task_counts.QUEUED || 0,
+    Running: (data.task_counts.RUNNING || 0) + (data.task_counts.ASSIGNED || 0),
+    Completed: data.task_counts.COMPLETED || 0, Failed: data.task_counts.FAILED || 0, Retries: data.retries})) {
+    const card = el('div', undefined, 'worker'); card.append(el('strong', String(value)), el('small', label)); $('overview').append(card);
+  }
+  $('activity').replaceChildren();
+  for (const task of data.recent_tasks.slice(0, 12)) {
+    const row = el('div', undefined, 'activity-row');
+    row.append(el('strong', task.task_type), el('span', `${task.worker_name || 'Waiting for a worker'} · ${task.status}`),
+      el('small', `Queue/previous attempts: ${task.queue_seconds}s · Execution: ${task.elapsed_seconds ?? '—'}s · Attempt ${task.attempt_count}${task.error_code ? ' · ' + task.error_code : ''}`));
+    const button = el('button', `Job ${task.job_id.slice(0, 8)}`, 'subtle');
+    button.onclick = () => openJob(task.job_id, task.task_type); row.append(button); $('activity').append(row);
+  }
+  if (!data.recent_tasks.length) $('activity').append(el('p', 'No tasks yet.'));
+  $('history').replaceChildren();
+  for (const job of jobs) {
+    const button = el('button', `${job.task_type} · ${job.status} · ${job.id.slice(0, 8)}`, 'subtle');
+    button.onclick = () => openJob(job.id, job.task_type); $('history').append(button);
+  }
+}
 async function refresh() {
   if (polling || !connected) return;
   polling = true;
+  const generation = connectionGeneration;
   try {
-    renderWorkers(await api('/workers?limit=100'));
-    if (jobId) renderResults(await api(`/jobs/${jobId}/results`));
-    $('connection').textContent = 'Connected';
+    const [workers, activity, jobs] = await Promise.all([api('/workers?limit=500'), api('/activity'), api('/jobs?limit=10')]);
+    if (!connected || generation !== connectionGeneration) return;
+    renderWorkers(workers, activity); renderActivity(activity, jobs);
+    if (jobId) {
+      const selectedJob = jobId;
+      const result = await api(`/jobs/${selectedJob}/results`);
+      if (!connected || generation !== connectionGeneration || selectedJob !== jobId) return;
+      renderResults(result);
+    }
+    $('connection').textContent = 'Connected · live updates';
   } catch (error) {
-    $('connection').textContent = 'Connection interrupted';
+    if (generation !== connectionGeneration) return;
+    $('connection').textContent = 'Connection interrupted — retrying';
     $('error').textContent = error.message;
   } finally { polling = false; }
 }
+function rememberToken(value) {
+  try { if (value) sessionStorage.setItem('coordinatorToken', value); else sessionStorage.removeItem('coordinatorToken'); }
+  catch { /* Connection still works when browser storage is unavailable. */ }
+}
+$('coordinator-url').textContent = location.origin;
+$('show-token').onclick = () => {
+  const show = $('token').type === 'password'; $('token').type = show ? 'text' : 'password';
+  $('show-token').textContent = show ? 'Hide token' : 'Show token';
+};
+$('disconnect').onclick = () => {
+  latestResult = null; $('download-result').disabled = true;
+  connectionGeneration++; connected = false; token = ''; rememberToken('');
+  $('token').value = ''; $('token').type = 'password'; $('show-token').textContent = 'Show token';
+  $('submit').disabled = true; $('disconnect').hidden = true; $('connection').textContent = 'Disconnected';
+  for (const id of ['workers','overview','activity','history','results']) $(id).replaceChildren();
+};
+$('remember-token').onchange = () => rememberToken(connected && $('remember-token').checked ? token : '');
 $('connect').onclick = async () => {
-  token = $('token').value;
+  token = $('token').value.trim();
+  $('connect').disabled = true;
   try {
     await api('/workers?limit=1');
-    connected = true;
-    $('submit').disabled = false;
+    connectionGeneration++; connected = true;
+    rememberToken($('remember-token').checked ? token : '');
+    $('submit').disabled = false; $('disconnect').hidden = false;
     $('error').textContent = '';
     await refresh();
   } catch (error) {
-    connected = false;
-    $('submit').disabled = true;
-    $('connection').textContent = 'Not connected';
-    $('error').textContent = error.message;
-  }
+    connected = false; rememberToken(''); $('submit').disabled = true;
+    $('connection').textContent = 'Not connected'; $('error').textContent = error.message;
+  } finally { $('connect').disabled = false; }
 };
+$('token').addEventListener('keydown', event => { if (event.key === 'Enter') $('connect').click(); });
+try {
+  const saved = sessionStorage.getItem('coordinatorToken');
+  if (saved) { $('token').value = saved; $('remember-token').checked = true; $('connect').click(); }
+} catch { /* Storage is optional. */ }
 $('submit').onclick = async () => {
   const mode = $('mode').value;
   const instruction = ['document-qa', 'coding-assistance'].includes(mode) ? $('instruction').value.trim() : '';
@@ -151,3 +230,10 @@ $('submit').onclick = async () => {
   finally { $('submit').disabled = !connected; }
 };
 setInterval(refresh, 2000);
+
+$('download-result').onclick = () => {
+  if (!latestResult) return;
+  const url = URL.createObjectURL(new Blob([JSON.stringify(latestResult, null, 2)], {type:'application/json'}));
+  const link = document.createElement('a'); link.href = url; link.download = `job-${latestResult.job_id}.json`;
+  link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+};

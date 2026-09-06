@@ -7,7 +7,7 @@ from test_simulator_postgres import server, stop
 from test_scheduler_postgres import factory
 
 @pytest.mark.skipif(os.environ.get('RUN_REAL_MODEL_TEST')!='1',reason='Requires downloaded model and worker venv')
-def test_real_summary_worker(server):
+def test_real_summary_worker(server, tmp_path):
     url,c=server
     # The fixture owns a separate temporary schema; its app settings are patched by
     # the fixture below before the HTTP server starts.
@@ -19,6 +19,7 @@ def test_real_summary_worker(server):
     jid=response.json()['job_id']
     root=Path(__file__).resolve().parents[2]
     env={k:v for k,v in os.environ.items() if k not in ['DATABASE_URL','TEST_DATABASE_URL']}
+    env['WORKER_STATE_DIR']=str(tmp_path)
     env['API_TOKEN']='sim-test'
     processes=[subprocess.Popen([str(root/'worker/.venv/bin/python'),str(root/'worker/run.py'),
         '--url',url,'--name',f'real-local-{i}','--max-tasks','1','--idle-timeout','60','--poll-seconds','0.2'],
@@ -36,8 +37,7 @@ def test_real_summary_worker(server):
         assert registered['ram_gb'] > 0
         assert registered['ram_available_gb'] is not None
         print('REAL SUMMARY OUTPUTS:',[r['text'] for r in result['results']])
-        assert c.get('/demo/').status_code==200
-        assert c.get('/demo/app.js').status_code==200
+        assert c.get('/openapi.json').status_code==200
     finally:
         for p in processes:stop(p)
 

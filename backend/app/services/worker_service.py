@@ -1,5 +1,6 @@
 from datetime import timedelta
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 from app.models import Worker
 from app.schemas.worker import WorkerRegisterRequest, WorkerResponse
 
@@ -14,11 +15,23 @@ def describe_worker(worker, now, timeout):
 
 
 def register_worker(db, payload: WorkerRegisterRequest):
-    worker = Worker(**payload.model_dump())
-    db.add(worker)
+    values = payload.model_dump()
+    if payload.device_id is None:
+        # Legacy clients keep their original registration behavior.
+        worker = Worker(**values)
+        db.add(worker)
+        db.commit()
+        db.refresh(worker)
+        return worker
+    # A unique device ID makes concurrent retries return the same worker row.
+    # Preserve active assignments and counters during reconnects.
+    statement = insert(Worker).values(**values)
+    updates = {k: getattr(statement.excluded, k) for k in values if k != 'device_id'}
+    updates.update(last_heartbeat=func.now(), updated_at=func.now())
+    worker_id = db.scalar(statement.on_conflict_do_update(
+        index_elements=[Worker.device_id], set_=updates).returning(Worker.id))
     db.commit()
-    db.refresh(worker)
-    return worker
+    return db.get(Worker, worker_id)
 
 
 def list_workers(db, timeout, limit, offset):

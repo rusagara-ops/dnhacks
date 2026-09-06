@@ -8,11 +8,16 @@ import platform
 import socket
 
 from inference import Summarizer, SUPPORTED_TASKS
-from hardware import hardware, memory_metrics
+from hardware import hardware, memory_metrics, device_id, lock_worker
 
 import httpx
 
 async def run(args):
+    with lock_worker():
+        return await run_locked(args)
+
+
+async def run_locked(args):
     print('Loading pinned summarization model before registration...', flush=True)
     model = await asyncio.to_thread(Summarizer)
     info = await asyncio.to_thread(hardware)
@@ -20,7 +25,7 @@ async def run(args):
     headers = {'Authorization': f'Bearer {token}'} if token else {}
     async with httpx.AsyncClient(base_url=args.url.rstrip('/'), headers=headers, timeout=10) as client:
         response = await client.post('/api/workers/register', json={
-            'name': args.name, 'hostname': socket.gethostname(), 'cpu': platform.machine(), 'cpu_cores': os.cpu_count() or 1,
+            'device_id': device_id(), 'name': args.name, 'hostname': socket.gethostname(), 'cpu': platform.machine(), 'cpu_cores': os.cpu_count() or 1,
             **info, 'supported_tasks': SUPPORTED_TASKS,
             'model_id': model.model_id, 'model_revision': model.model_revision,
         })
@@ -51,9 +56,19 @@ async def run(args):
         beat = asyncio.create_task(heartbeat())
         processed = 0
         idle_since = time.monotonic()
+        pull_backoff = 1
         try:
             while processed < args.max_tasks:
-                response = await client.post(f'/api/workers/{worker}/next-task')
+                try:
+                    response = await client.post(f'/api/workers/{worker}/next-task')
+                    if response.status_code >= 500:
+                        raise httpx.TransportError('Coordinator temporarily unavailable')
+                except httpx.TransportError:
+                    print('Coordinator unavailable; reconnecting automatically.', flush=True)
+                    await asyncio.sleep(pull_backoff)
+                    pull_backoff = min(pull_backoff * 2, 10)
+                    continue
+                pull_backoff = 1
                 if response.status_code == 409:
                     # A delayed heartbeat or just-expired lease can race the next pull.
                     # Restore idle presence and let the coordinator recover ownership.

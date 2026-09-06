@@ -14,6 +14,7 @@ class InputModel(BaseModel):
 
 
 class WorkerRegisterRequest(InputModel):
+    device_id: UUID | None = None
     name: Name
     hostname: Name
     cpu: Name

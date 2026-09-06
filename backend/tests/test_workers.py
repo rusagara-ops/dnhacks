@@ -31,6 +31,7 @@ def test_health_without_database(client):
 
 def test_api_requires_configured_token(client):
     assert client.get('/api/workers').status_code == 401
+    assert client.get('/api/activity').status_code == 401
     assert client.post('/api/workers/register', json=PAYLOAD).status_code == 401
 
 
