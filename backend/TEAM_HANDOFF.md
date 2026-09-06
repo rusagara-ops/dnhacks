@@ -1,81 +1,75 @@
-# Demo handoff: Abel, Kevin, Ronald
+# Backend and worker work split — Abel, Kevin, Ronald
 
-## Current demo architecture
+Scope: `backend/` and `worker/` only. No frontend work is assigned here.
 
-Abel's 24 GB Mac runs the coordinator, Supabase-backed queue, and Gemma 3 12B through Ollama on its Apple GPU. Kevin and Ronald use the website as clients. This demonstrates remote inference from multiple laptops; only registered compute workers execute tasks. Do not start old Qwen workers on the client laptops.
+Base: PR #4, branch `backend-worker-updates`, targeting `main`. Branch from its latest commit until it merges; afterward branch from updated `main`. Preserve existing local changes. Each owner opens a separate small PR and coordinates shared contract changes before implementation.
 
-Working branch: `abel-backend`. Before editing, fetch and inspect the latest changes. Preserve local work. Coordinate integration through PRs; do not force-push or merge unfinished frontend changes over the demo.
+## Existing foundation
 
-## Implemented in Abel's branch
+- Gemma 3 12B on Abel's Apple GPU; four task types: summary, document Q&A, extraction, coding help.
+- Persistent device IDs, idempotent registration, process locking, heartbeat leases, retries, and saved results.
+- `GET /api/workers` suppresses superseded offline legacy registrations by default. `?include_history=true` returns historical rows. Real modern device IDs stay distinct even if names/hostnames match.
+- `GET /api/activity` reports current task ownership, recent tasks, state totals, retries, and per-worker completion counts and mean execution time.
+- RAM/GPU telemetry is carried in heartbeats. Apple memory is unified; no invented separate free-GPU-memory pool.
+- `GET /api/connection` validates the existing bearer token and returns non-secret model/limit/heartbeat configuration.
+- `worker/connect.py` prompts for the token without echoing or storing it. Validation alone does not start compute; `--start-worker` does.
 
-- Summary, document Q&A, structured information extraction, and coding assistance.
-- Model-pinned jobs, single-task worker leases, heartbeats, retries, and persisted results.
-- Stable worker installation IDs: restarting reconnects to the same row. A local lock prevents two processes using the same installation simultaneously.
-- Live GPU/shared-memory telemetry and CPU/RAM utilization.
-- Authenticated `/api/activity`: current assignments, recent tasks, timings, retry totals, and worker completion metrics.
-- Dashboard task ownership, recent-job reopening, result JSON download, and better connection controls.
-- Optional token remembering uses sessionStorage for this tab, never localStorage. Disconnect removes it. A shared demo token is not individual user authentication.
+## Abel — coordinator identity, scheduling, and database
 
-Legacy worker rows and their historical results are preserved. The dashboard hides redundant offline legacy registrations by hostname and prefers modern device identities. Metrics on a modern worker cover that worker ID; historical registrations are not silently merged into its totals.
+Own: `backend/app/services/worker_service.py`, scheduler/recovery/task lifecycle services, models, migrations, and their tests.
 
-## Abel — backend and compute owner
+Next work:
+1. Rehearse concurrent registration retries and worker restarts; verify stable worker IDs and preserved active assignments.
+2. Add job cancellation with an explicit terminal state and safe treatment of late completions. Agree on the contract before migrating anything.
+3. Add request idempotency for job submission so network retries cannot submit duplicate jobs.
+4. Verify failure recovery and successful partial results using isolated database tests.
 
-Own `backend/app/`, `backend/migrations/`, and the running coordinator configuration. Keep database schema changes through Alembic only.
+Acceptance: no duplicate modern workers or jobs from retries; task counters remain correct; late or duplicate results cannot overwrite accepted results. Cancellation must not be reported as completed work. Apply schema changes only through Alembic.
 
-Next tasks:
-1. Confirm migration `78ccab156bc1` is applied and one `Abel-Mac` appears after repeated restarts.
-2. Keep the coordinator, Ollama Terminal, and Gemma worker running for the rehearsal.
-3. Review the final integration PRs and preserve all four task contracts.
-4. Own any backend bug fixes discovered in the three-laptop rehearsal.
+## Kevin — worker runtime, telemetry, and reliability
 
-Acceptance: requests from both client laptops complete through the same GPU worker; results remain available after page refresh through Recent jobs; retries preserve partial-result semantics.
+Own: `worker/run.py`, `worker/inference.py`, `worker/hardware.py`, worker startup scripts, and `worker/tests/`. Coordinate changes to heartbeat fields with Abel and Ronald.
 
-## Kevin — worker reliability and demo verification owner
+Next work:
+1. Extend reconnect testing to interrupted result uploads and heartbeat outages; reuse the same assignment and result on retry.
+2. Add Ollama prompt-token/output-token counts, generation duration, and tokens-per-second telemetry. Report unknown measurements as null.
+3. Benchmark the four task types on Abel's GPU and document latency and memory observations. Do not claim results for untested computers.
+4. Produce a reliable startup/shutdown and recovery checklist, including model digest mismatch and unavailable GPU cases.
 
-Own `worker/` and worker-focused tests. Coordinate with Abel before restarting his compute worker or changing model settings. Do not edit Ronald's frontend or alter database schemas independently.
+Acceptance: one process per installation, one active task per worker, heartbeats continue during generation, no automatic code execution, and no credential leakage. Never copy `.cache/device-id` between computers.
 
-Next tasks:
-1. Test repeated worker stops/restarts and verify its worker ID stays constant.
-2. Confirm a second process from the same installation is rejected by the local lock.
-3. Verify heartbeats continue during coding requests and that GPU allocation is reported.
-4. Prepare a small set of English examples for each task type, including one unanswerable document question.
-5. Run a controlled disconnect/recovery test with Abel; record job IDs and observed outcomes.
+## Ronald — backend observability, connection tooling, and API integration
 
-Acceptance: no duplicate modern compute card, no silent CPU fallback, no lost successful results, and a reproducible startup/recovery checklist. Do not copy `worker/.cache/` to another computer; it contains the installation identity and local files.
+Own: `backend/app/api/activity.py`, `backend/app/api/connection.py`, a new backend observability service/module and its tests, plus `worker/connect.py`. Coordinate with Kevin before changing other worker files.
 
-## Ronald — frontend and client experience owner
+Next work:
+1. Add time-windowed metrics: throughput, median/p95 execution duration, queue delay, failure rate, and last successful completion per worker. Define windows and denominators explicitly.
+2. Add paginated/filterable task activity by worker, job, type, and status. Preserve current fields for consumers.
+3. Add backend correlation/request IDs for tracing a submission through assignment and completion; keep source text and tokens out of routine logs.
+4. Extend the connection helper with precise timeout/401/model-mismatch diagnostics and automated tests. Never save tokens by default or place them in URLs.
 
-Own `frontend/`. Treat `backend/demo/` as a working reference. Build the main frontend against the contracts below; coordinate with Abel before replacing the demo or modifying backend routes.
+Acceptance: activity identifies the exact worker and task; metrics use measured timestamps; retry time is not mislabeled pure queue time; APIs require authentication; diagnostics do not disclose credentials.
 
-Next tasks:
-1. Port task selection, source/request fields, structured extraction output, and preserved code formatting into the main frontend.
-2. Port compute cards, active task ownership, recent jobs, and result download.
-3. Port connection handling with explicit tab-only remembering and Disconnect. Never embed the token or place it in a URL.
-4. Test on Kevin's laptop and a narrow/mobile-sized viewport, including offline, wrong-token, empty-result, queued, and failed states.
-5. Make a PR with screenshots and a short integration checklist.
+## Shared contracts and coordination
 
-Acceptance: all four tasks work against Abel's coordinator; switching modes preserves pasted content; model output is rendered as text without execution; offline telemetry is unavailable rather than falsely zero.
+All `/api/*` routes require `Authorization: Bearer <API_TOKEN>` when configured. Share this token privately. Worker/client machines never need `DATABASE_URL`.
 
-## Shared API contract
+- `POST /api/workers/register`: optional UUID `device_id` identifies modern installations. Legacy retries reuse matching hostname/name/model/revision records; these fields are a compatibility fallback, not strong physical-machine identity.
+- `POST /api/jobs`: `task_type`, `inputs: [source]`, optional `instruction`. Q&A requires a question; coding optionally accepts a request.
+- `GET /api/jobs/{id}/results`: results, status, counters and attribution.
+- `GET /api/activity`: active tasks (up to 100), recent tasks (up to 30), task counts, retry total and worker metrics.
+- `GET /api/connection`: authenticated configuration check, with no token or database URL in its response.
 
-All `/api/*` routes use `Authorization: Bearer <API_TOKEN>`. Get the token privately from Abel. Never share `DATABASE_URL`, commit `.env`, or include tokens in screenshots or reports.
+Current timing caveat: `queue_seconds` on retried tasks includes previous attempts; `elapsed_seconds` describes the current/latest execution. Existing completion averages cover retained history, not a rolling window. Historical registrations are not silently merged into a modern worker's lifetime counters.
 
-- `POST /api/jobs`: `{task_type, inputs: [source], instruction?}`. Types: `summarization`, `document-qa`, `information-extraction`, `coding-assistance`. Q&A requires `instruction`; coding optionally accepts it.
-- `GET /api/jobs?limit=10`: recent jobs for reopening persisted results.
-- `GET /api/jobs/{id}/results`: status, counters, results, and task attribution.
-- `GET /api/workers`: stable `id`, optional `device_id`, presence, hardware and live telemetry.
-- `GET /api/activity`: `as_of`, `active_tasks` (up to 100), `recent_tasks` (up to 30), `task_counts`, `retries`, and `worker_metrics`.
-- Worker registration adds optional UUID `device_id`. Updated workers persist it in their ignored state directory and reuse it.
+Before editing shared schemas, post the proposed request/response shape in your PR for the other two owners. Additive changes should remain compatible with older workers. Each PR should state tests run and any migration or restart requirement. Do not merge your own breaking contract change before the other owners review it.
 
-`active_tasks`/`recent_tasks` include task/job IDs, task type, worker ID/name, status, attempt count, input count, timestamps, elapsed execution seconds, queue/previous-attempt seconds, and the last error code. Timing for retried tasks includes prior attempts in the pre-current-execution interval; do not label it pure queue latency. Error codes may describe earlier recovered attempts.
+## Joint acceptance rehearsal
 
-Extraction results are `{index,names,dates,amounts,action_items}` with string arrays. Other new modes return `{index,text}`. The API retains sentiment compatibility. Read `backend/README.md` for limits and details.
+1. Verify `/ready` and authenticate with `worker/connect.py --url http://ABEL_LAN_IP:8000`.
+2. Restart Abel's worker twice and confirm the same worker ID and one default listing entry.
+3. Submit different task types concurrently through the API; verify ownership and queue transitions in `/api/activity`.
+4. Interrupt one worker in a controlled test and confirm recovery without duplicate saved results.
+5. Confirm persisted results, failure reporting, token rejection, and no secrets in logs.
 
-## Rehearsal together
-
-1. Abel confirms `/ready` and the GPU worker.
-2. Kevin opens `http://ABEL_LAN_IP:8000/demo/`, Ronald opens the same address, and both connect using the token.
-3. Submit different task types together; watch one execute and the other queue.
-4. Reopen finished jobs and compare stored results with the original requests.
-5. Test one controlled worker restart, then confirm the same worker identity and recovered work.
-6. Keep a prepared example for each mode and keep the compute Mac plugged in and awake.
+Current deployment uses one GPU compute host. Kevin's and Ronald's laptops can submit API requests without running a model. Testing with three clients is not the same as distributing computation across three GPU workers.

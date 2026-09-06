@@ -79,3 +79,10 @@ def test_cors(client):
         'Access-Control-Request-Headers': 'authorization'})
     assert result.status_code == 200
     assert result.headers['access-control-allow-origin'] == 'http://localhost:5173'
+
+
+def test_connection_checks_auth_without_exposing_secrets(client):
+    assert client.get('/api/connection').status_code==401
+    result=client.get('/api/connection',headers={'Authorization':'Bearer test-token'})
+    assert result.status_code==200 and result.json()['authenticated']
+    assert 'test-token' not in result.text and 'database_url' not in result.text

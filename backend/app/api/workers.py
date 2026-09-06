@@ -24,8 +24,8 @@ def register(payload: WorkerRegisterRequest, request: Request, db: Session = Dep
 
 
 @router.get('', response_model=list[WorkerResponse])
-def workers(request: Request, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), db: Session = Depends(get_db)):
-    return worker_service.list_workers(db, request.app.state.settings.worker_timeout_seconds, limit, offset)
+def workers(request: Request, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), include_history: bool = False, db: Session = Depends(get_db)):
+    return worker_service.list_workers(db, request.app.state.settings.worker_timeout_seconds, limit, offset, include_history)
 
 
 @router.post('/{worker_id}/heartbeat', response_model=HeartbeatResponse)
