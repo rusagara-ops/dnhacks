@@ -42,3 +42,23 @@ def test_same_name_different_devices_stay_separate(factory):
     with factory() as db:a=register_worker(db,payload(uuid4())).id
     with factory() as db:b=register_worker(db,payload(uuid4())).id
     assert a!=b
+
+
+def test_legacy_retry_and_default_listing(factory):
+    from datetime import datetime,timedelta,timezone
+    from app.services.worker_service import list_workers
+    legacy=payload(None)
+    with factory() as db: first=register_worker(db,legacy).id
+    with factory() as db: assert register_worker(db,legacy).id==first
+    with factory() as db: modern=register_worker(db,payload(uuid4())).id
+    with factory.begin() as db:db.get(Worker,first).last_heartbeat=datetime.now(timezone.utc)-timedelta(seconds=60)
+    with factory() as db:
+        assert [w.id for w in list_workers(db,15,100,0)]==[modern]
+        assert len(list_workers(db,15,100,0,include_history=True))==2
+
+
+def test_modern_devices_with_same_hostname_are_not_hidden(factory):
+    from app.services.worker_service import list_workers
+    with factory() as db:register_worker(db,payload(uuid4()))
+    with factory() as db:register_worker(db,payload(uuid4()))
+    with factory() as db:assert len(list_workers(db,15,100,0))==2
