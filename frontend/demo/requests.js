@@ -3,13 +3,16 @@
   const $ = id => document.getElementById(id);
   const taskNames = {summarization:'Summaries','document-qa':'Document questions','information-extraction':'Information extraction','coding-assistance':'Coding assistance'};
   let token = '', identity = null, providers = [];
+  const TOKEN_KEY = 'dnhacksDemoToken';
+  const saveToken = value => { try { value ? localStorage.setItem(TOKEN_KEY, value) : localStorage.removeItem(TOKEN_KEY); } catch { /* storage is optional */ } };
+  const loadStoredToken = () => { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } };
   const node = (tag, text, cls) => { const value = document.createElement(tag); if (text != null) value.textContent = text; if (cls) value.className = cls; return value; };
   async function api(path, body) {
     const response = await fetch('/api' + path, {method: body === undefined ? 'GET' : 'POST', redirect:'error', signal:AbortSignal.timeout(15000), headers:{Authorization:'Bearer '+token, ...(body === undefined ? {} : {'Content-Type':'application/json'})}, body:body === undefined ? undefined : JSON.stringify(body)});
     if (!response.ok) { const data = await response.json().catch(() => ({})); throw Error(typeof data.detail === 'string' ? data.detail : `Request rejected (${response.status}).`); }
     return response.json();
   }
-  function disconnect() { token=''; identity=null; providers=[]; $('dashboard').hidden=true; $('disconnect').hidden=true; $('connect').disabled=false; $('account-token').value=''; $('identity').textContent='Not connected'; $('error').textContent=''; }
+  function disconnect() { saveToken(''); token=''; identity=null; providers=[]; $('dashboard').hidden=true; $('disconnect').hidden=true; $('connect').disabled=false; $('account-token').value=''; $('identity').textContent='Not connected'; $('error').textContent=''; }
   $('disconnect').onclick = disconnect;
   function renderProviderOptions() {
     const select = $('provider'), previous = select.value; select.replaceChildren(node('option','Choose a provider')); select.firstChild.value='';
@@ -42,5 +45,7 @@
   async function loadRequests() { try { renderRequests(await api('/work-requests')); $('requests-error').textContent=''; } catch(error) { $('requests-error').textContent=error.message; } }
   $('provider').onchange=renderModelOptions; $('task').onchange=renderModelOptions; $('refresh-providers').onclick=loadProviders; $('refresh-requests').onclick=loadRequests;
   $('request-form').onsubmit=async event=>{event.preventDefault(); const provider=selectedProvider(), option=$('provider').selectedOptions[0]; if(!provider) return; const button=event.currentTarget.querySelector('button'); button.disabled=true; $('request-message').textContent=''; try { await api('/work-requests',{provider_account_id:option.dataset.provider,worker_id:provider.worker_id,task_type:$('task').value,model_id:$('model').value||null}); $('request-message').textContent='Request sent. The provider can approve it from this page.'; await loadRequests(); } catch(error) { $('request-message').textContent=error.message; } finally { button.disabled=false; }};
-  $('connection-form').onsubmit=async event=>{event.preventDefault(); const next=$('account-token').value.trim(); disconnect(); token=next; $('connect').disabled=true; try { identity=await api('/me'); if(identity.credential_kind!=='account'&&identity.credential_kind!=='demo') throw Error('Use a member account token here.'); $('dashboard').hidden=false; $('disconnect').hidden=false; $('identity').textContent=`${identity.name} · ${identity.role}`; await Promise.all([loadProviders(),loadRequests()]); } catch(error) { token=''; $('error').textContent=error.message; } finally {$('connect').disabled=false;} };
+  $('connection-form').onsubmit=async event=>{event.preventDefault(); const next=$('account-token').value.trim(); disconnect(); token=next; $('connect').disabled=true; try { identity=await api('/me'); if(identity.credential_kind!=='account'&&identity.credential_kind!=='demo') throw Error('Use a member account token here.'); $('dashboard').hidden=false; $('disconnect').hidden=false; $('identity').textContent=`${identity.name} · ${identity.role}`; await Promise.all([loadProviders(),loadRequests()]); saveToken(token); } catch(error) { token=''; saveToken(''); $('error').textContent=error.message; } finally {$('connect').disabled=false;} };
+  const storedToken = loadStoredToken();
+  if (storedToken) { $('account-token').value = storedToken; $('connection-form').requestSubmit(); }
 })();

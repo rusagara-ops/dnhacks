@@ -4,6 +4,9 @@
   const taskNames = {summarization: 'Summaries', 'document-qa': 'Document questions', 'information-extraction': 'Information extraction', 'coding-assistance': 'Coding assistance', 'sentiment-classification': 'Sentiment (legacy)'};
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   let token = '', identity = null, epoch = 0, ledgerOffset = 0, grantRetry = null;
+  const TOKEN_KEY = 'dnhacksDemoToken';
+  const saveToken = value => { try { value ? localStorage.setItem(TOKEN_KEY, value) : localStorage.removeItem(TOKEN_KEY); } catch { /* storage is optional */ } };
+  const loadStoredToken = () => { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } };
   const node = (tag, text, cls) => { const value = document.createElement(tag); if (text != null) value.textContent = text; if (cls) value.className = cls; return value; };
   const signed = value => value > 0 ? `+${value}` : String(value);
   const time = minute => `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
@@ -34,7 +37,7 @@
   $('copy-token').onclick = async () => { try { await navigator.clipboard.writeText($('new-token').value); $('secret-status').textContent = 'Copied. Keep it private and clear it here after saving.'; } catch { $('secret-status').textContent = 'Clipboard access is unavailable here. Reveal and copy the token manually.'; } };
   $('clear-token').onclick = clearSecret;
   function disconnect() {
-    epoch++; token = ''; identity = null; grantRetry = null; ledgerOffset = 0; clearSecret();
+    epoch++; saveToken(''); token = ''; identity = null; grantRetry = null; ledgerOffset = 0; clearSecret();
     $('account-token').value = ''; $('dashboard').hidden = true; $('disconnect').hidden = true; $('connect').disabled = false; $('identity').textContent = 'Not connected'; $('error').textContent = '';
     for (const id of ['providers', 'credentials', 'accounts', 'ledger']) $(id).replaceChildren();
     for (const id of ['wallet-error', 'providers-error', 'credential-error', 'account-error', 'grant-message', 'enroll-message']) $(id).textContent = '';
@@ -64,9 +67,12 @@
       $('bootstrap-help').textContent = me.credential_kind === 'bootstrap' ? 'First create an administrator. The setup token cannot submit jobs or operate workers.' : 'Enroll approved team members. Each account token is shown once and should be delivered privately.';
       if (me.credential_kind === 'bootstrap') $('account-role').value = 'admin';
       await Promise.allSettled([account ? loadWallet() : null, account ? loadCredentials() : null, !$('providers-panel').hidden ? loadWorkers() : null, admin ? loadAccounts() : null]);
-    } catch (error) { if (current === epoch) { token = ''; $('error').textContent = error.message; } }
+      if (current === epoch) saveToken(token);
+    } catch (error) { if (current === epoch) { token = ''; saveToken(''); $('error').textContent = error.message; } }
     finally { if (current === epoch) $('connect').disabled = false; }
   };
+  const storedToken = loadStoredToken();
+  if (storedToken) { $('account-token').value = storedToken; $('connection-form').requestSubmit(); }
   async function loadWallet() {
     const current = epoch, offset = ledgerOffset;
     try {
