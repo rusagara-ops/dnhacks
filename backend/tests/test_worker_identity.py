@@ -62,3 +62,21 @@ def test_modern_devices_with_same_hostname_are_not_hidden(factory):
     with factory() as db:register_worker(db,payload(uuid4()))
     with factory() as db:register_worker(db,payload(uuid4()))
     with factory() as db:assert len(list_workers(db,15,100,0))==2
+
+
+def test_machine_id_migration_reuses_existing_row(factory):
+    from app.schemas.worker import WorkerRegisterRequest
+    from app.services.worker_service import register_worker
+    from sqlalchemy import select, func
+    old, new = uuid4(), uuid4()
+    payload = WorkerRegisterRequest(device_id=old, name='Mac', hostname='host', cpu='arm64',
+        cpu_cores=8, ram_gb=24, supported_tasks=['summarization'])
+    with factory() as db:
+        first = register_worker(db, payload).id
+    with factory() as db:
+        migrated = register_worker(db, payload.model_copy(update={'device_id':new, 'previous_device_id':old}))
+        assert migrated.id == first and migrated.device_id == new
+    with factory() as db:
+        assert register_worker(db, payload.model_copy(update={'device_id':new})).id == first
+    with factory() as db:
+        assert db.scalar(select(func.count()).select_from(Worker)) == 1

@@ -1,6 +1,8 @@
 const $ = id => document.getElementById(id);
 let token = '', jobId = null, connected = false, polling = false, jobMode = 'summarization', connectionGeneration = 0, latestResult = null;
 let latestWorkers = [], submitting = false;
+const knownJobs = new Map();
+let jobsPage = 0, jobsOnPage = [], jobsHaveNext = false, jobsLoading = false, jobsRequest = 0;
 const locations = new ComputeLocations(api, () => renderModels());
 const example = `The city library is launching a three-month pilot to make its services easier to access. Starting in October, weekday closing time will move from 6 p.m. to 9 p.m. The change follows requests from residents who work during the day and need a quiet place to study in the evening.
 
@@ -95,7 +97,7 @@ function renderModels() {
   $('submit').disabled = !connected || submitting || !available;
 }
 function renderWorkers(workers, activity) {
-  const candidates = workers.filter(w => workerModels(w).some(m => m.supported_tasks.some(t => t in modes)));
+  const candidates = workers.filter(w => w.status !== 'OFFLINE' && workerModels(w).some(m => m.supported_tasks.some(t => t in modes)));
   const modernHosts = new Set(candidates.filter(w => w.device_id).map(w => w.hostname));
   const seen = new Set();
   const relevant = candidates.filter(w => {
@@ -132,11 +134,13 @@ function renderWorkers(workers, activity) {
     if (shared) card.append(el('small', '*System memory estimate, not a guaranteed GPU allocation budget. No separate GPU RAM pool.'));
     $('workers').append(card);
   }
-  if (!relevant.length) $('workers').append(el('p', 'No workers registered. Start a compatible worker.'));
+  if (!relevant.length) $('workers').append(el('p', 'No compute machines online. Start a compatible worker.'));
   $('online').textContent = `${relevant.filter(w => w.status !== 'OFFLINE').length} online`;
 }
 function renderResults(data) {
   latestResult = data; $('download-result').disabled = false;
+  WorkDistribution.render($('distribution'), knownJobs.get(jobId), data, latestWorkers);
+  $('distribution-state').textContent = 'Showing job ' + jobId;
   $('status').textContent = data.status;
   $('progress').max = data.total_inputs;
   $('progress').value = data.completed_inputs + data.failed_inputs;
@@ -169,39 +173,64 @@ function renderResults(data) {
 async function openJob(id, mode) {
   jobId = id; jobMode = mode;
   $('result-title').textContent = mode;
-  try { const result = await api(`/jobs/${id}/results`); if (connected && jobId === id) renderResults(result); }
+  $('distribution-state').textContent = 'Loading selected job…';
+  $('distribution').replaceChildren();
+  const generation = connectionGeneration;
+  try {
+    const [job, result] = await Promise.all([api(`/jobs/${id}`), api(`/jobs/${id}/results`)]);
+    if (connected && jobId === id && generation === connectionGeneration) {
+      knownJobs.set(id, job); renderJobList(); renderResults(result);
+    }
+  } catch (error) { $('error').textContent = error.message; $('distribution-state').textContent = 'Could not load the selected job.'; }
+}
+function renderJobList() {
+  const list = $('job-list');
+  const signature = JSON.stringify([jobsOnPage, jobId, jobsPage, jobsHaveNext, jobsLoading, connected]);
+  if (list.dataset.signature === signature && list.childElementCount) return;
+  list.dataset.signature = signature; list.replaceChildren();
+  for (const job of jobsOnPage) {
+    const button = el('button', undefined, 'job-list-item' + (job.id === jobId ? ' selected' : ''));
+    button.type = 'button'; button.disabled = !connected || jobsLoading;
+    button.setAttribute('aria-pressed', String(job.id === jobId));
+    button.append(el('strong', `${job.task_type} · ${job.status}`),
+      el('span', `${job.model_id || 'Default model'} · ${job.id.slice(0, 8)}`),
+      el('small', new Date(job.created_at).toLocaleString()));
+    button.onclick = () => { openJob(job.id, job.task_type); renderJobList(); };
+    list.append(button);
+  }
+  if (!jobsOnPage.length) list.append(el('p', !connected ? 'Connect to see jobs.' : jobsLoading ? 'Loading jobs…' : 'No jobs yet.'));
+  $('jobs-page').textContent = `Page ${jobsPage + 1}` + (jobsLoading ? ' · Loading…' : jobsOnPage.length ? ` · Jobs ${jobsPage * 10 + 1}–${jobsPage * 10 + jobsOnPage.length}` : '');
+  $('jobs-prev').disabled = !connected || jobsLoading || jobsPage === 0;
+  $('jobs-next').disabled = !connected || jobsLoading || !jobsHaveNext;
+}
+async function loadJobPage(background = false) {
+  const request = ++jobsRequest, generation = connectionGeneration, page = jobsPage;
+  if (!background) { jobsLoading = true; renderJobList(); }
+  try {
+    // The eleventh record indicates another page; only ten are displayed.
+    const jobs = await api(`/jobs?limit=11&offset=${page * 10}`);
+    if (!connected || request !== jobsRequest || generation !== connectionGeneration) return;
+    jobsOnPage = jobs.slice(0, 10); jobsHaveNext = jobs.length > 10;
+    for (const job of jobsOnPage) knownJobs.set(job.id, job);
+  } finally {
+    if (request === jobsRequest && generation === connectionGeneration) { jobsLoading = false; renderJobList(); }
+  }
+}
+async function changeJobPage(delta) {
+  jobsPage += delta; jobsOnPage = [];
+  try { await loadJobPage(); }
   catch (error) { $('error').textContent = error.message; }
 }
-function renderActivity(data, jobs) {
-  $('overview').replaceChildren();
-  for (const [label, value] of Object.entries({Queued: data.task_counts.QUEUED || 0,
-    Running: (data.task_counts.RUNNING || 0) + (data.task_counts.ASSIGNED || 0),
-    Completed: data.task_counts.COMPLETED || 0, Failed: data.task_counts.FAILED || 0, Retries: data.retries})) {
-    const card = el('div', undefined, 'worker'); card.append(el('strong', String(value)), el('small', label)); $('overview').append(card);
-  }
-  $('activity').replaceChildren();
-  for (const task of data.recent_tasks.slice(0, 12)) {
-    const row = el('div', undefined, 'activity-row');
-    row.append(el('strong', task.task_type), el('span', `${task.worker_name || 'Waiting for a worker'} · ${task.status}`),
-      el('small', `Queue/previous attempts: ${task.queue_seconds}s · Execution: ${task.elapsed_seconds ?? '—'}s · Attempt ${task.attempt_count}${task.error_code ? ' · ' + task.error_code : ''}`));
-    const button = el('button', `Job ${task.job_id.slice(0, 8)}`, 'subtle');
-    button.onclick = () => openJob(task.job_id, task.task_type); row.append(button); $('activity').append(row);
-  }
-  if (!data.recent_tasks.length) $('activity').append(el('p', 'No tasks yet.'));
-  $('history').replaceChildren();
-  for (const job of jobs) {
-    const button = el('button', `${job.task_type} · ${job.status} · ${job.id.slice(0, 8)}`, 'subtle');
-    button.onclick = () => openJob(job.id, job.task_type); $('history').append(button);
-  }
-}
+$('jobs-prev').onclick = () => { if (jobsPage > 0 && !jobsLoading) changeJobPage(-1); };
+$('jobs-next').onclick = () => { if (jobsHaveNext && !jobsLoading) changeJobPage(1); };
 async function refresh() {
   if (polling || !connected) return;
   polling = true;
   const generation = connectionGeneration;
   try {
-    const [workers, activity, jobs] = await Promise.all([api('/workers?limit=500'), api('/activity'), api('/jobs?limit=10')]);
+    const [workers, activity] = await Promise.all([api('/workers?limit=500'), api('/activity'), loadJobPage(true)]);
     if (!connected || generation !== connectionGeneration) return;
-    latestWorkers = workers; renderModels(); renderWorkers(workers, activity); renderActivity(activity, jobs);
+    latestWorkers = workers; renderModels(); renderWorkers(workers, activity); renderJobList();
     await locations.refresh();
     if (!connected || generation !== connectionGeneration) return;
     if (jobId) {
@@ -209,11 +238,20 @@ async function refresh() {
       const result = await api(`/jobs/${selectedJob}/results`);
       if (!connected || generation !== connectionGeneration || selectedJob !== jobId) return;
       renderResults(result);
+      if (result.status === 'QUEUED') {
+        const eligibility = await api(`/jobs/${selectedJob}/eligibility?limit=100`);
+        if (!connected || generation !== connectionGeneration || selectedJob !== jobId) return;
+        const online = eligibility.workers.filter(w => !w.reasons.includes('OFFLINE'));
+        const reasons = [...new Set(online.flatMap(w => w.reasons))];
+        const messages = {FREE_RAM_INSUFFICIENT: 'waiting for available RAM', GPU_MODEL_NOT_CONFIRMED: 'waiting for models to load', BUSY: 'waiting for a free model slot', CPU_OVERLOADED: 'waiting for CPU capacity'};
+        if (!online.some(w => w.eligible)) $('status').textContent = 'QUEUED — ' + (online.length ? reasons.map(r => messages[r] || r.toLowerCase().replaceAll('_', ' ')).join('; ') : 'waiting for an online worker');
+      }
     }
     $('connection').textContent = 'Connected · live updates';
   } catch (error) {
     if (generation !== connectionGeneration) return;
     $('connection').textContent = 'Connection interrupted — retrying';
+    $('distribution-state').textContent = 'Connection interrupted. Displayed counts may be stale.';
     $('error').textContent = error.message;
   } finally { polling = false; }
 }
@@ -233,7 +271,8 @@ $('disconnect').onclick = () => {
   latestWorkers = []; $('model').value = ''; locations.modelId = ''; renderModels();
   $('token').value = ''; $('token').type = 'password'; $('show-token').textContent = 'Show token';
   $('submit').disabled = true; $('disconnect').hidden = true; $('connection').textContent = 'Disconnected';
-  for (const id of ['workers','overview','activity','history','results']) $(id).replaceChildren();
+  knownJobs.clear(); jobId = null; jobsPage = 0; jobsOnPage = []; jobsHaveNext = false; jobsLoading = false; jobsRequest++; renderJobList(); $('distribution-state').textContent = 'Disconnected';
+  for (const id of ['workers','distribution','results']) $(id).replaceChildren();
 };
 $('remember-token').onchange = () => rememberToken(connected && $('remember-token').checked ? token : '');
 $('connect').onclick = async () => {
@@ -272,6 +311,7 @@ $('submit').onclick = async () => {
     const job = await api('/jobs', { task_type: mode, ...($('model').value ? {model_id: $('model').value} : {}), inputs: [document], optimization: 'fastest', ...(locations.selected ? {target_worker_id: locations.selected} : {}), ...(instruction ? {instruction} : {}) });
     jobId = job.job_id;
     jobMode = mode;
+    jobsPage = 0; await loadJobPage();
     $('result-title').textContent = {summarization: 'Document summary', 'document-qa': 'Answer', 'information-extraction': 'Extracted information', 'coding-assistance': 'Code assistance'}[mode];
     await refresh();
   } catch (error) { $('error').textContent = error.message; }

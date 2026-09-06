@@ -12,7 +12,7 @@ def describe_worker(worker, now, timeout):
     status = 'OFFLINE' if now - worker.last_heartbeat > timedelta(seconds=timeout) else (
         'BUSY' if worker.active_tasks else 'AVAILABLE'
     )
-    fields = {name: getattr(worker, name) for name in WorkerResponse.model_fields if name != 'status'}
+    fields = {name: getattr(worker, name) for name in WorkerResponse.model_fields if name not in ('status', 'previous_device_id')}
     return WorkerResponse(**fields, status=status)
 
 
@@ -21,6 +21,12 @@ def register_worker(db, payload: WorkerRegisterRequest):
     if payload.device_id is not None:
         db.execute(select(func.pg_advisory_xact_lock(func.hashtext(str(payload.device_id)))))
         existing = db.scalar(select(Worker).where(Worker.device_id == payload.device_id).with_for_update())
+        if existing is None and payload.previous_device_id is not None:
+            previous = db.scalar(select(Worker).where(Worker.device_id == payload.previous_device_id).with_for_update())
+            if previous is not None:
+                previous.device_id = payload.device_id
+                db.flush()
+                existing = previous
         if existing and existing.active_tasks and (existing.models != values['models'] or
                 existing.model_id != payload.model_id or existing.model_revision != payload.model_revision):
             raise HTTPException(409, 'Drain active assignments before changing registered models')

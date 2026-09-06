@@ -27,6 +27,7 @@ class WorkerModel(InputModel):
 
 
 class WorkerRegisterRequest(InputModel):
+    previous_device_id: UUID | None = Field(default=None, exclude=True)
     models: list[WorkerModel] = Field(default_factory=list, max_length=2)
 
     @model_validator(mode='after')

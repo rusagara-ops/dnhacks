@@ -8,7 +8,7 @@ import platform
 import socket
 
 from inference import Summarizer, SUPPORTED_TASKS
-from hardware import hardware, memory_metrics, device_id, lock_worker
+from hardware import hardware, memory_metrics, device_id, previous_device_id, lock_worker
 from location import location_from_args
 
 import httpx
@@ -30,7 +30,7 @@ async def run_locked(args, model=None, registration=None, model_pool=None):
     async with httpx.AsyncClient(base_url=args.url.rstrip('/'), headers=headers, timeout=10) as client:
         if registration is None:
             response = await client.post('/api/workers/register', json={
-                'device_id': device_id(), 'name': args.name, 'hostname': socket.gethostname(), 'cpu': platform.machine(), 'cpu_cores': os.cpu_count() or 1,
+                'previous_device_id': previous_device_id(), 'device_id': device_id(), 'name': args.name, 'hostname': socket.gethostname(), 'cpu': platform.machine(), 'cpu_cores': os.cpu_count() or 1,
                 **info, 'supported_tasks': getattr(model, 'supported_tasks', SUPPORTED_TASKS),
                 'model_id': model.model_id, 'model_revision': model.model_revision,
                 **({'location': location} if location is not None else {}),
@@ -155,7 +155,7 @@ async def run_multi(args):
     headers = {'Authorization': f'Bearer {token}'} if token else {}
     async with httpx.AsyncClient(base_url=args.url.rstrip('/'), headers=headers, timeout=10) as client:
         response = await client.post('/api/workers/register', json={
-            'device_id': device_id(), 'name': args.name, 'hostname': socket.gethostname(),
+            'previous_device_id': previous_device_id(), 'device_id': device_id(), 'name': args.name, 'hostname': socket.gethostname(),
             'cpu': platform.machine(), 'cpu_cores': os.cpu_count() or 1, **info,
             'supported_tasks': list(dict.fromkeys(t for m in models for t in m.supported_tasks)),
             'model_id': models[0].model_id, 'model_revision': models[0].model_revision,

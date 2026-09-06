@@ -34,13 +34,43 @@ def memory_metrics():
             'cpu_utilization': psutil.cpu_percent(), 'gpu_available_gb': None}
 
 
-def device_id():
-    """Stable per-install identity; never copy the ignored cache to another Mac."""
+def previous_device_id():
+    """Read the installation ID for one-time migration of an existing DB row."""
     from pathlib import Path
-    from uuid import UUID, uuid4
+    from uuid import UUID
     import os
     path = Path(os.environ.get('WORKER_STATE_DIR', str(Path(__file__).resolve().parent / '.cache'))) / 'device-id'
+    try:
+        return str(UUID(path.read_text().strip()))
+    except FileNotFoundError:
+        return None
+
+
+def device_id():
+    """Mac identity survives repository copies. Never send the raw hardware UUID."""
+    from pathlib import Path
+    from uuid import UUID, uuid4, uuid5, NAMESPACE_URL
+    import os
+    import re
+    path = Path(os.environ.get('WORKER_STATE_DIR', str(Path(__file__).resolve().parent / '.cache'))) / 'device-id'
     path.parent.mkdir(parents=True, exist_ok=True)
+    # An explicit state directory preserves isolated test/simulator identities.
+    if platform.system() == 'Darwin' and 'WORKER_STATE_DIR' not in os.environ:
+        try:
+            result = subprocess.run(['ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'],
+                                    capture_output=True, text=True, check=True, timeout=5)
+            match = re.search(r'"IOPlatformUUID"\s*=\s*"([0-9A-Fa-f-]+)"', result.stdout)
+            if match:
+                hardware_id = str(UUID(match.group(1)))
+                identity = str(uuid5(NAMESPACE_URL, 'dnhacks:mac:' + hardware_id))
+                try:
+                    with path.open('x') as file:
+                        file.write(identity)
+                except FileExistsError:
+                    pass  # Retain the old alias until registration can migrate it.
+                return identity
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
     try:
         with path.open('x') as file:
             file.write(str(uuid4()))
@@ -55,10 +85,14 @@ def lock_worker():
     from pathlib import Path
     path = Path(os.environ.get('WORKER_STATE_DIR', str(Path(__file__).resolve().parent / '.cache')))
     path.mkdir(parents=True, exist_ok=True)
-    handle = (path / 'worker.lock').open('a')
+    lock_path = path / 'worker.lock'
+    if platform.system() == 'Darwin' and 'WORKER_STATE_DIR' not in os.environ:
+        import tempfile
+        lock_path = Path(tempfile.gettempdir()) / f'dnhacks-worker-{device_id()}.lock'
+    handle = lock_path.open('a')
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         handle.close()
-        raise RuntimeError('A worker is already running from this installation.')
+        raise RuntimeError('A worker is already running for this machine identity.')
     return handle
