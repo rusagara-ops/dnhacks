@@ -1,6 +1,6 @@
 const $ = id => document.getElementById(id);
 let token = '', jobId = null, connected = false, polling = false, jobMode = 'summarization', connectionGeneration = 0, latestResult = null;
-let latestWorkers = [], submitting = false;
+let latestWorkers = [], submitting = false, workRequests = [];
 let identity = null, creditQuote = null, ambiguousSubmission = false;
 const knownJobs = new Map();
 let jobsPage = 0, jobsOnPage = [], jobsHaveNext = false, jobsLoading = false, jobsRequest = 0;
@@ -98,6 +98,26 @@ function renderModels() {
     : 'Uses the coordinator’s configured default model.';
   $('submit').disabled = !connected || submitting || !available || ambiguousSubmission;
   $('submit').textContent = identity?.auth_mode === 'controlled' ? creditQuote ? `Reserve ${creditQuote.value.credits} credits and submit →` : 'Review demo credit cost →' : modes[mode][0];
+}
+function renderWorkRequests() {
+  const panel = $('work-request-panel');
+  if (!connected || identity?.auth_mode !== 'controlled') { panel.hidden = true; return; }
+  panel.hidden = false;
+  const select = $('work-request'), previous = select.value;
+  select.replaceChildren(el('option', 'Use automatic assignment'));
+  select.firstChild.value = '';
+  const approved = workRequests.filter(item => item.status === 'APPROVED');
+  for (const item of approved) {
+    const option = el('option', `${item.provider_name} · ${item.worker_name} · ${item.task_type}${item.model_id ? ` · ${item.model_id}` : ''}`);
+    option.value = item.id; option.dataset.taskType = item.task_type; option.dataset.modelId = item.model_id || ''; select.append(option);
+  }
+  select.value = approved.some(item => item.id === previous) ? previous : '';
+  $('work-request-help').textContent = approved.length ? 'The approved provider will receive the next matching job.' : 'Request access from another participant before selecting it here.';
+}
+async function loadWorkRequests() {
+  if (!connected || identity?.auth_mode !== 'controlled') return;
+  try { workRequests = await api('/work-requests'); renderWorkRequests(); $('work-request-error').textContent = ''; }
+  catch (error) { $('work-request-error').textContent = error.message; }
 }
 function renderWorkers(workers, activity) {
   const candidates = workers.filter(w => w.status !== 'OFFLINE' && workerModels(w).some(m => m.supported_tasks.some(t => t in modes)));
@@ -231,7 +251,7 @@ async function refresh() {
   polling = true;
   const generation = connectionGeneration;
   try {
-    const [workers, activity] = await Promise.all([api('/workers?limit=500'), api('/activity'), loadJobPage(true)]);
+    const [workers, activity] = await Promise.all([api('/workers?limit=500'), api('/activity'), loadJobPage(true), loadWorkRequests()]);
     if (!connected || generation !== connectionGeneration) return;
     latestWorkers = workers; renderModels(); renderWorkers(workers, activity); renderJobList();
     await locations.refresh();
@@ -272,12 +292,14 @@ $('disconnect').onclick = () => {
   locations.disconnect();
   latestResult = null; $('download-result').disabled = true;
   connectionGeneration++; connected = false; token = ''; rememberToken('');
-  latestWorkers = []; $('model').value = ''; locations.modelId = ''; renderModels();
+  latestWorkers = []; workRequests = []; $('model').value = ''; $('work-request').replaceChildren(el('option', 'Use automatic assignment')); locations.modelId = ''; renderModels(); renderWorkRequests();
   $('token').value = ''; $('token').type = 'password'; $('show-token').textContent = 'Show token';
   $('submit').disabled = true; $('disconnect').hidden = true; $('connection').textContent = 'Disconnected';
   knownJobs.clear(); jobId = null; jobsPage = 0; jobsOnPage = []; jobsHaveNext = false; jobsLoading = false; jobsRequest++; renderJobList(); $('distribution-state').textContent = 'Disconnected';
   for (const id of ['workers','distribution','results']) $(id).replaceChildren();
 };
+$('work-request').onchange = () => { clearCreditQuote(); const selected = $('work-request').selectedOptions[0]; if (selected?.value && selected.dataset.taskType !== $('mode').value) $('error').textContent = 'Choose the approved request task before submitting.'; else $('error').textContent = ''; renderModels(); };
+$('refresh-work-requests').onclick = () => { void loadWorkRequests(); };
 $('remember-token').onchange = () => rememberToken(connected && $('remember-token').checked ? token : '');
 $('connect').onclick = async () => {
   token = $('token').value.trim();
@@ -321,7 +343,9 @@ $('submit').onclick = async () => {
   let submittingJob = false;
   $('error').textContent = '';
   try {
-    const payload = { task_type: mode, ...($('model').value ? {model_id: $('model').value} : {}), inputs: [document], optimization: 'fastest', ...(locations.selected ? {target_worker_id: locations.selected} : {}), ...(instruction ? {instruction} : {}) };
+    const selectedRequest = $('work-request').value ? workRequests.find(item => item.id === $('work-request').value) : null;
+    if (selectedRequest && selectedRequest.task_type !== mode) { $('error').textContent = 'Choose the task type approved by the provider.'; return; }
+    const payload = { task_type: mode, ...($('model').value ? {model_id: $('model').value} : {}), inputs: [document], optimization: 'fastest', ...(selectedRequest ? {work_request_id: selectedRequest.id} : locations.selected ? {target_worker_id: locations.selected} : {}), ...(instruction ? {instruction} : {}) };
     const signature = JSON.stringify(payload);
     if (identity?.auth_mode === 'controlled' && creditQuote?.payload !== signature) {
       const value = await api('/credits/quote', payload);

@@ -23,6 +23,7 @@ from app.services.recovery import recover_expired
 from app.core.config import Settings
 from app.api.provider import router as provider_router
 from app.api.credits import router as credits_router
+from app.api.work_requests import router as work_requests_router
 from app.db.database import make_engine, make_sessions
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,7 @@ def create_app(settings: Settings | None = None):
     app.include_router(jobs_router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(provider_router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(credits_router, prefix='/api', dependencies=[Depends(require_token)])
+    app.include_router(work_requests_router, prefix='/api', dependencies=[Depends(require_token)])
 
     @app.exception_handler(SQLAlchemyError)
     async def database_error(request, exc):
@@ -118,6 +120,7 @@ def create_app(settings: Settings | None = None):
             db.execute(text('SELECT owner_account_id FROM coordinator.jobs LIMIT 0'))
             db.execute(text('SELECT account_id FROM coordinator.wallets LIMIT 0'))
             db.execute(text('SELECT worker_id FROM coordinator.provider_policies LIMIT 0'))
+            db.execute(text('SELECT id, requester_account_id, provider_account_id, status FROM coordinator.work_requests LIMIT 0'))
         return {'status': 'ok', 'database': 'ok'}
 
     demo_directory = Path(__file__).resolve().parents[2] / 'frontend' / 'demo'

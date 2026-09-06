@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Work requests · Stranded Compute</title>
+  <link rel="stylesheet" href="/demo/sharing.css">
+</head>
+<body>
+  <header><a href="/demo/" class="brand">SC / STRANDED COMPUTE</a><nav><a href="/demo/">Jobs</a> · <a href="/demo/sharing.html">Sharing</a></nav></header>
+  <main>
+    <div class="intro"><p class="eyebrow">COORDINATED ACCESS</p><h1>Request trusted compute.</h1><p>Find an approved participant, ask them to accept a workload, and keep the existing worker limits in charge of execution.</p><span class="badge">No automatic trust · provider approval required</span></div>
+    <section aria-labelledby="connection-title">
+      <h2 id="connection-title">Connect your account</h2>
+      <form id="connection-form" class="row"><label class="grow">Account token<input id="account-token" type="password" autocomplete="off" placeholder="Your member account token"></label><button id="connect">Connect</button><button id="disconnect" type="button" class="secondary" hidden>Disconnect</button></form>
+      <p class="hint">The token stays in this page’s memory. Worker credentials cannot be used here.</p>
+      <p id="identity" role="status">Not connected</p><p id="error" role="alert"></p>
+    </section>
+    <div id="dashboard" hidden>
+      <section aria-labelledby="directory-title"><div class="heading"><h2 id="directory-title">Available providers</h2><button id="refresh-providers" class="secondary" type="button">Refresh providers</button></div><p class="hint">Only coarse capability and admission information is shown. Provider names and machines are never discovered directly over the LAN.</p><div id="providers" class="provider-grid"><p>Connect to discover approved participants.</p></div><p id="providers-error" role="status"></p></section>
+      <section aria-labelledby="request-title"><h2 id="request-title">Request work</h2><form id="request-form"><div class="row"><label class="grow">Provider and machine<select id="provider" required><option value="">Choose a provider</option></select></label><label class="grow">Task<select id="task" required><option value="summarization">Summaries</option><option value="document-qa">Document questions</option><option value="information-extraction">Information extraction</option><option value="coding-assistance">Coding assistance</option></select></label><label class="grow">Model<select id="model"><option value="">Provider chooses compatible model</option></select></label><button>Request approval</button></div><p id="request-message" role="status"></p></form></section>
+      <section aria-labelledby="requests-title"><div class="heading"><h2 id="requests-title">Work requests</h2><button id="refresh-requests" class="secondary" type="button">Refresh requests</button></div><p class="hint">Requests sent by you and requests waiting for your provider decision appear here.</p><div id="requests"></div><p id="requests-error" role="status"></p></section>
+    </div>
+  </main>
+  <footer>Requests authorize a future job; the provider still controls sharing, model compatibility, and concurrency.</footer>
+  <script src="/demo/requests.js"></script>
+</body>
+</html>
