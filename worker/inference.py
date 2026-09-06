@@ -7,6 +7,18 @@ MODEL_ID = 'gemma3:12b'
 MAX_DOCUMENT_BYTES = 6000
 SUPPORTED_TASKS = ['summarization', 'document-qa', 'information-extraction', 'coding-assistance']
 EXTRACTION_KEYS = ['names', 'dates', 'amounts', 'action_items']
+
+
+def generation_metrics(responses):
+    """Ollama eval_duration is nanoseconds and excludes prompt evaluation/loading."""
+    def total(key):
+        values = [response.get(key) for response in responses]
+        return sum(values) if values and all(type(value) is int and value >= 0 for value in values) else None
+    duration = total('eval_duration')
+    return {'prompt_tokens': total('prompt_eval_count'), 'output_tokens': total('eval_count'),
+            'generation_duration_ms': duration / 1_000_000 if duration is not None else None}
+
+
 EXTRACTION_SCHEMA = {
     'type': 'object', 'additionalProperties': False,
     'properties': {key: {'type': 'array', 'maxItems': 20,
@@ -62,6 +74,7 @@ class Summarizer:
             return None
 
     def predict(self, task):
+        self.last_metrics = None
         if (task['model_id'], task['model_revision']) != (self.model_id, self.model_revision) or task['task_type'] not in SUPPORTED_TASKS:
             raise ValueError('Unsupported inference contract')
         # Detect a replaced local model tag instead of silently using different weights.
@@ -75,6 +88,7 @@ class Summarizer:
         if mode == 'document-qa' and not instruction:
             raise ValueError('A question is required')
         results = []
+        measurements = []
         for item in task['inputs']:
             if len(item['text'].encode('utf-8')) > MAX_DOCUMENT_BYTES or len(item['text'].encode('utf-8')) + len(instruction.encode('utf-8')) > 6500:
                 raise ValueError('Input exceeds demo limit')
@@ -93,6 +107,7 @@ class Summarizer:
             response = httpx.post(self.url + '/api/chat', json=body, timeout=300)
             response.raise_for_status()
             data = response.json()
+            measurements.append(data)
             if not data.get('done') or data.get('done_reason') == 'length':
                 raise RuntimeError('Model output incomplete')
             output = data['message']['content'].strip()
@@ -104,4 +119,5 @@ class Summarizer:
                 if not output or len(output) > 8000:
                     raise ValueError('Invalid model output')
                 results.append({'index': item['index'], 'text': output})
+        self.last_metrics = generation_metrics(measurements)
         return results

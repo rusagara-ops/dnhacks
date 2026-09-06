@@ -2,7 +2,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func, update, or_
 
 from app.services.recovery import recover_expired
 from app.services.eligibility import eligibility_reasons
@@ -55,6 +55,7 @@ def get_next_task(db, worker_id, settings):
         task = db.scalar(select(Task).join(Job, Task.job_id == Job.id).where(
             Task.status == 'QUEUED', Task.attempt_count < 3,
             Job.status.in_(['QUEUED', 'RUNNING']),
+            or_(Job.target_worker_id.is_(None), Job.target_worker_id == worker_id),
             Job.task_type.in_(supported),
             Job.model_id == worker.model_id, Job.model_revision == worker.model_revision,
         ).order_by(Task.created_at, Task.start_index, Task.id)

@@ -34,7 +34,7 @@ echo
 worker/.venv/bin/python worker/run.py --url http://127.0.0.1:8000 --name Abel-Mac
 ```
 
-Hardware capacity is detected automatically. The old `--ram-gb` flag has been removed. Model warmup happens before registration. Inference runs off the heartbeat loop; heartbeats continue while generating. Stop with Ctrl+C. Restarting creates a new registration, so old records may remain offline.
+Hardware capacity is detected automatically. The old `--ram-gb` flag has been removed. Model warmup happens before registration. Inference runs off the heartbeat loop; heartbeats continue while generating. Stop with Ctrl+C. Restarting from the same installation reuses its persistent worker identity.
 
 ## Client laptops
 
@@ -79,5 +79,7 @@ The source limit remains 6,000 UTF-8 bytes. Source plus instruction must fit wit
 See the backend README for request and response examples. `tests/test_real_modes_postgres.py` is an opt-in test covering known-answer Q&A, missing-answer Q&A, structured extraction, and code help through real GPU inference and persisted results.
 
 ## Stable reconnects
+
+See [RECOVERY_CHECKLIST.md](RECOVERY_CHECKLIST.md) for startup/shutdown, interrupted uploads, model/GPU checks and the four-mode benchmark command. [GPU discovery and shared contract](../docs/COMPUTE_LOCATIONS.md) documents optional `--site`, `--region`, `--latitude`, `--longitude` registration and per-result inference telemetry. Deploy the updated coordinator before updated workers.
 
 Worker identity is persisted in `.cache/device-id` and sent as `device_id` during registration. Restarting reuses the same database worker ID and retains task history. Do not delete or copy this file to another machine. A local `.cache/worker.lock` prevents simultaneous worker processes from the same installation. For isolated tests only, `WORKER_STATE_DIR` selects a separate state directory. Existing legacy registrations remain in the database for historical attribution; the demo hides redundant offline legacy cards.

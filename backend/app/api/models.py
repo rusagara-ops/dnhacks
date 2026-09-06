@@ -30,6 +30,8 @@ def job_eligibility(job_id: UUID, request: Request, limit: int = Query(100, ge=1
     for worker in workers:
         reasons = eligibility_reasons(worker, job.model_id, job.model_revision, job.task_type,
                                       now, request.app.state.settings.worker_timeout_seconds)
+        if job.target_worker_id is not None and job.target_worker_id != worker.id:
+            reasons.append('DIFFERENT_TARGET_WORKER')
         rows.append(dict(worker_id=worker.id, worker_name=worker.name, eligible=not reasons, reasons=reasons))
     return dict(job_id=job.id, as_of=now, policy='registered-model' if job.model_id in MODEL_REGISTRY else 'legacy-model-match-only',
                 workers=rows, limit=limit, offset=offset)

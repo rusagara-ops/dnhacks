@@ -11,9 +11,25 @@ from app.services.task_service import renew_heartbeat
 from app.services import worker_service
 from app.schemas.task import NextTaskResponse
 from app.services.scheduler import get_next_task
+from app.schemas.worker import WorkerLocationsResponse
+from app.services.locations import list_locations
 
 router = APIRouter(prefix='/workers', tags=['workers'])
 logger = logging.getLogger(__name__)
+
+
+@router.get('/locations', response_model=WorkerLocationsResponse)
+def locations(request: Request,
+              latitude: float | None = Query(None, ge=-90, le=90, allow_inf_nan=False),
+              longitude: float | None = Query(None, ge=-180, le=180, allow_inf_nan=False),
+              task_type: str | None = Query(None, min_length=1, max_length=100),
+              gpu_only: bool = False, online_only: bool = False,
+              limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
+              db: Session = Depends(get_db)):
+    if (latitude is None) != (longitude is None):
+        raise HTTPException(422, 'Provide both latitude and longitude')
+    return list_locations(db, request.app.state.settings, latitude, longitude, task_type,
+                          gpu_only, online_only, limit, offset)
 
 
 @router.post('/register', status_code=201, response_model=WorkerRegisterResponse)
@@ -24,8 +40,8 @@ def register(payload: WorkerRegisterRequest, request: Request, db: Session = Dep
 
 
 @router.get('', response_model=list[WorkerResponse])
-def workers(request: Request, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), db: Session = Depends(get_db)):
-    return worker_service.list_workers(db, request.app.state.settings.worker_timeout_seconds, limit, offset)
+def workers(request: Request, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), include_history: bool = False, db: Session = Depends(get_db)):
+    return worker_service.list_workers(db, request.app.state.settings.worker_timeout_seconds, limit, offset, include_history)
 
 
 @router.post('/{worker_id}/heartbeat', response_model=HeartbeatResponse)

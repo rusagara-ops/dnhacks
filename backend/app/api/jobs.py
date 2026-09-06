@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 @router.post('', status_code=201, response_model=JobCreateResponse)
 def create_job(payload: JobCreateRequest, response: Response, request: Request, db: Session = Depends(get_db)):
     model_id, revision = select_model(payload, request.app.state.settings)
-    job = job_service.create_job(db, payload, model_id, revision)
+    job = job_service.create_job(db, payload, model_id, revision,
+                                request.app.state.settings.worker_timeout_seconds)
     response.headers['Location'] = f'/api/jobs/{job.id}'
     logger.info('Job created: %s (%s tasks)', job.id, job.total_tasks)
     return JobCreateResponse(job_id=job.id, total_inputs=job.total_inputs, total_tasks=job.total_tasks)

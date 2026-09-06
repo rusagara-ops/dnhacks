@@ -9,6 +9,7 @@ import socket
 
 from inference import Summarizer, SUPPORTED_TASKS
 from hardware import hardware, memory_metrics, device_id, lock_worker
+from location import location_from_args
 
 import httpx
 
@@ -18,6 +19,7 @@ async def run(args):
 
 
 async def run_locked(args):
+    location = location_from_args(args)
     print('Loading pinned summarization model before registration...', flush=True)
     model = await asyncio.to_thread(Summarizer)
     info = await asyncio.to_thread(hardware)
@@ -28,6 +30,7 @@ async def run_locked(args):
             'device_id': device_id(), 'name': args.name, 'hostname': socket.gethostname(), 'cpu': platform.machine(), 'cpu_cores': os.cpu_count() or 1,
             **info, 'supported_tasks': SUPPORTED_TASKS,
             'model_id': model.model_id, 'model_revision': model.model_revision,
+            **({'location': location} if location is not None else {}),
         })
         response.raise_for_status()
         worker = response.json()['worker_id']
@@ -104,6 +107,9 @@ async def run_locked(args):
                         body['error'] = failure
                     else:
                         body.update(results=results, execution_time_ms=int((time.monotonic()-started)*1000))
+                        metrics = getattr(model, 'last_metrics', None)
+                        if metrics is not None:
+                            body['inference_metrics'] = dict(metrics)
                     # Retry ambiguous uploads with exactly the same assignment and result.
                     for attempt in range(3):
                         try:
@@ -132,10 +138,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--url', default='http://127.0.0.1:8000')
     parser.add_argument('--name', default=socket.gethostname())
+    parser.add_argument('--site', help='Approximate campus or city name (opt-in)')
+    parser.add_argument('--region', help='State, province or country')
+    parser.add_argument('--latitude', type=float)
+    parser.add_argument('--longitude', type=float)
     parser.add_argument('--poll-seconds', type=float, default=1)
     parser.add_argument('--idle-timeout', type=float, default=86400)
     parser.add_argument('--max-tasks', type=int, default=10000)
     args = parser.parse_args()
+    try:
+        location_from_args(args)
+    except ValueError as exc:
+        parser.error(str(exc))
     if min(args.poll_seconds,args.idle_timeout) <= 0 or args.max_tasks < 1:
         parser.error('Durations and max-tasks must be positive')
     try:
