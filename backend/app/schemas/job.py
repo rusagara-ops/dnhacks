@@ -11,6 +11,7 @@ class JobCreateRequest(BaseModel):
     instruction: str | None = Field(default=None, min_length=1, max_length=1000)
     optimization: Literal['fastest'] = 'fastest'
     target_worker_id: UUID | None = None
+    model_id: str | None = Field(default=None, min_length=1, max_length=200)
 
     @field_validator('inputs')
     @classmethod

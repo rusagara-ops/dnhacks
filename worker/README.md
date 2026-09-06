@@ -83,3 +83,17 @@ See the backend README for request and response examples. `tests/test_real_modes
 See [RECOVERY_CHECKLIST.md](RECOVERY_CHECKLIST.md) for startup/shutdown, interrupted uploads, model/GPU checks and the four-mode benchmark command. [GPU discovery and shared contract](../docs/COMPUTE_LOCATIONS.md) documents optional `--site`, `--region`, `--latitude`, `--longitude` registration and per-result inference telemetry. Deploy the updated coordinator before updated workers.
 
 Worker identity is persisted in `.cache/device-id` and sent as `device_id` during registration. Restarting reuses the same database worker ID and retains task history. Do not delete or copy this file to another machine. A local `.cache/worker.lock` prevents simultaneous worker processes from the same installation. For isolated tests only, `WORKER_STATE_DIR` selects a separate state directory. Existing legacy registrations remain in the database for historical attribution; the demo hides redundant offline legacy cards.
+
+## Run Gemma and Qwen concurrently
+
+Download `gemma3:12b` and `qwen2.5-coder:3b` into the same Ollama server. Restart `start-ollama.command`: it allows two loaded models and one request per model (`OLLAMA_MAX_LOADED_MODELS=2`, `OLLAMA_NUM_PARALLEL=1`). Stop the old worker before starting this process; the existing device lock prevents duplicate installations from running concurrently.
+
+From the repository root, with the existing `API_TOKEN` environment variable:
+
+```bash
+worker/.venv/bin/python worker/run.py --name Abel-Mac --url http://127.0.0.1:8000 --models gemma3:12b qwen2.5-coder:3b
+```
+
+Gemma supports the four existing tasks with an 8192-token context. Qwen supports coding assistance with a 4096-token context. Both must remain GPU-loaded before registration succeeds. One machine row advertises both models, with one independent assignment per model. Heartbeats report combined model GPU allocation (unified memory, not a separate free VRAM pool). Closing the worker stops both model loops; leases recover unfinished work.
+
+Omitting `--models` preserves the Gemma-only worker. Concurrent generation shares GPU resources and is not a speedup guarantee. `--max-tasks` and `--idle-timeout` apply independently to each model loop. Keep ordinary applications' memory usage in mind when testing both models.

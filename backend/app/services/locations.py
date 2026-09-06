@@ -39,6 +39,6 @@ def list_locations(db, settings, latitude=None, longitude=None, task_type=None,
         worker=describe_worker(worker, now, settings.worker_timeout_seconds),
         distance_km=round(km, 1) if km is not None else None,
         compatible=bool(settings.inference_model_id and settings.inference_model_revision
-                        and (worker.model_id, worker.model_revision) == (
-                            settings.inference_model_id, settings.inference_model_revision)),
+                        and any((m['model_id'], m['model_revision']) == (
+                            settings.inference_model_id, settings.inference_model_revision) for m in (worker.models or [{'model_id': worker.model_id, 'model_revision': worker.model_revision}]))),
     ) for worker, km in rows], total=total, limit=limit, offset=offset, distance_reference=reference)

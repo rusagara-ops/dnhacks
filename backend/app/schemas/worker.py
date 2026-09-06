@@ -20,7 +20,21 @@ class WorkerLocation(InputModel):
     longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
 
 
+class WorkerModel(InputModel):
+    model_id: Name
+    model_revision: Name
+    supported_tasks: list[Literal['summarization', 'document-qa', 'information-extraction', 'coding-assistance']] = Field(min_length=1, max_length=4)
+
+
 class WorkerRegisterRequest(InputModel):
+    models: list[WorkerModel] = Field(default_factory=list, max_length=2)
+
+    @model_validator(mode='after')
+    def unique_models(self):
+        if len({m.model_id for m in self.models}) != len(self.models):
+            raise ValueError('Model IDs must be unique')
+        return self
+
     location: WorkerLocation | None = None
     device_id: UUID | None = None
     name: Name

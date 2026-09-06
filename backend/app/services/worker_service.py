@@ -1,4 +1,5 @@
 from datetime import timedelta
+from fastapi import HTTPException
 from sqlalchemy import func, select, or_, and_
 from sqlalchemy.orm import aliased
 from sqlalchemy.dialects.postgresql import insert
@@ -17,6 +18,12 @@ def describe_worker(worker, now, timeout):
 
 def register_worker(db, payload: WorkerRegisterRequest):
     values = payload.model_dump()
+    if payload.device_id is not None:
+        db.execute(select(func.pg_advisory_xact_lock(func.hashtext(str(payload.device_id)))))
+        existing = db.scalar(select(Worker).where(Worker.device_id == payload.device_id).with_for_update())
+        if existing and existing.active_tasks and (existing.models != values['models'] or
+                existing.model_id != payload.model_id or existing.model_revision != payload.model_revision):
+            raise HTTPException(409, 'Drain active assignments before changing registered models')
     if payload.device_id is None:
         # Older clients have no installation ID. Serialize exact legacy-identity
         # retries and reuse their latest row without merging distinct modern devices.

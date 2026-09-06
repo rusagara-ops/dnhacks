@@ -18,7 +18,7 @@ def assignment_response(task, job):
     ))
 
 
-def get_next_task(db, worker_id, settings):
+def get_next_task(db, worker_id, settings, model_id=None):
     recover_expired(db, settings)
     with db.begin():
         # Lock worker first everywhere that modifies assignment ownership.
@@ -28,17 +28,26 @@ def get_next_task(db, worker_id, settings):
         now = db.scalar(select(func.clock_timestamp()))
         if now - worker.last_heartbeat > timedelta(seconds=settings.worker_timeout_seconds):
             raise HTTPException(409, 'Worker is offline; send a heartbeat first')
+        slot = model_id if worker.models else ''
+        inventory = worker.models or [{'model_id': worker.model_id, 'model_revision': worker.model_revision, 'supported_tasks': worker.supported_tasks}]
+        selected = next((m for m in inventory if m['model_id'] == (model_id or worker.model_id)), None)
+        if selected is None:
+            raise HTTPException(422, 'Model is not registered on this worker')
+        if worker.models and model_id is None:
+            slot = selected['model_id']
         active = db.scalar(select(Task).where(
-            Task.assigned_worker_id == worker_id, Task.status.in_(['ASSIGNED', 'RUNNING'])
+            Task.assigned_worker_id == worker_id, Task.model_slot == slot, Task.status.in_(['ASSIGNED', 'RUNNING'])
         ).with_for_update())
         if active:
             if active.lease_expires_at is None or active.lease_expires_at <= now:
                 raise HTTPException(409, 'Assignment expired; retry after recovery')
             # A lost HTTP response can be retried without consuming another attempt.
             return assignment_response(active, db.get(Job, active.job_id))
+        if worker.models and worker.active_tasks >= len(worker.models):
+            return NextTaskResponse(task=None)
         if not settings.inference_model_id or not settings.inference_model_revision:
             raise HTTPException(503, 'Inference model and revision are not configured')
-        if worker.active_tasks:
+        if worker.active_tasks and not worker.models:
             return NextTaskResponse(task=None)
         if not worker.model_id or not worker.model_revision:
             raise HTTPException(409, 'Register with a loaded model ID and revision first')
@@ -46,8 +55,8 @@ def get_next_task(db, worker_id, settings):
             Task.status == 'QUEUED', Task.attempt_count < 3,
             Job.status.in_(['QUEUED', 'RUNNING']),
             or_(Job.target_worker_id.is_(None), Job.target_worker_id == worker_id),
-            Job.task_type.in_(worker.supported_tasks),
-            Job.model_id == worker.model_id, Job.model_revision == worker.model_revision,
+            Job.task_type.in_(selected['supported_tasks']),
+            Job.model_id == selected['model_id'], Job.model_revision == selected['model_revision'],
         ).order_by(Task.created_at, Task.start_index, Task.id)
             .with_for_update(skip_locked=True, of=Task).limit(1))
         if task is None:
@@ -58,7 +67,8 @@ def get_next_task(db, worker_id, settings):
         task.assignment_id = uuid4()
         task.lease_expires_at = now + timedelta(seconds=settings.task_lease_seconds)
         task.attempt_count += 1
-        worker.active_tasks = 1
+        task.model_slot = slot
+        worker.active_tasks += 1
         # Conditional SQL update avoids resetting an already-running job's start time.
         db.execute(update(Job).where(Job.id == task.job_id, Job.status == 'QUEUED')
                    .values(status='RUNNING', started_at=now))

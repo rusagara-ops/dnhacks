@@ -18,7 +18,9 @@ def recover_expired(db, settings):
             worker = db.scalar(select(Worker).where(Worker.id == worker_id).with_for_update(skip_locked=True))
             if worker is None:
                 continue
-            task = db.scalar(select(Task).where(Task.assigned_worker_id == worker_id, Task.status.in_(ACTIVE))
+            task = db.scalar(select(Task).where(Task.assigned_worker_id == worker_id, Task.status.in_(ACTIVE), or_(Task.lease_expires_at <= now,
+                                 Worker.last_heartbeat < now - timedelta(seconds=settings.worker_timeout_seconds)))
+                             .join(Worker, Task.assigned_worker_id == Worker.id)
                              .with_for_update(skip_locked=True))
             if task is None:
                 continue
