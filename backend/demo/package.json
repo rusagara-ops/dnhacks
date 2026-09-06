@@ -1,6 +1,13 @@
 {
   "name": "dnhacks-demo-tests",
   "private": true,
-  "scripts": {"test": "playwright test tests --workers=1"},
-  "devDependencies": {"@playwright/test": "1.63.0"}
+  "scripts": {
+    "test": "playwright test tests --workers=1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  },
+  "dependencies": {
+    "leaflet": "1.9.4"
+  }
 }

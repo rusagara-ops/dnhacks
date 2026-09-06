@@ -459,6 +459,8 @@ See `backend/TEAM_HANDOFF.md` for Abel/Kevin/Ronald ownership and acceptance che
 
 See [GPU discovery and shared contract](../docs/COMPUTE_LOCATIONS.md) for optional worker locations, the map in `/demo/`, explicit job targeting, saved inference measurements, migration `a92e8f37d610`, and rollout/review notes.
 
+The map uses bundled Leaflet with OpenStreetMap tiles and supports zoom/pan. Visitors get an opt-in location prompt and can choose an approximate area on the map when browser geolocation is unavailable. Automatic geolocation on a LAN address requires trusted HTTPS. Owners can save a worker's missing site through **Place this worker on map**; visitor location sharing alone does not publish a GPU location. If `/api/workers` works but `/api/workers/locations` returns 404, restart the backend on the updated code (fresh static files do not reload Python routes).
+
 ### Backend-only connection and legacy-registration cleanup
 
 `GET /api/workers` now filters superseded offline legacy records before pagination. Add `include_history=true` for historical registrations. Modern device IDs are never collapsed by name or hostname. Old clients without device IDs reuse an exact hostname/name/model/revision registration under a transaction lock; upgrading to persistent device IDs is still preferred.

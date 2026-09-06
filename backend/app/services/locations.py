@@ -1,6 +1,6 @@
 """Geographic discovery; distances are not network routes or latency estimates."""
 from datetime import timedelta
-from sqlalchemy import case, func, literal, select
+from sqlalchemy import case, func, literal, select, or_
 from app.models import Worker
 from app.schemas.worker import LocatedWorker, WorkerLocationsResponse
 from app.services.worker_service import visible_workers, describe_worker
@@ -17,7 +17,7 @@ def list_locations(db, settings, latitude=None, longitude=None, task_type=None,
     now = db.scalar(select(func.clock_timestamp()))
     query = visible_workers(now, settings.worker_timeout_seconds)
     if gpu_only:
-        query = query.where(Worker.gpu.is_not(None))
+        query = query.where(or_(Worker.gpu.is_not(None), Worker.gpu_model_memory_gb > 0))
     if online_only:
         query = query.where(Worker.last_heartbeat >= now - timedelta(seconds=settings.worker_timeout_seconds))
     if task_type:

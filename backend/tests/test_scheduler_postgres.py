@@ -116,3 +116,31 @@ def test_offline_unknown_unconfigured_and_empty(factory):
         with pytest.raises(HTTPException) as e:
             get_next_task(db,fresh,Settings(_env_file=None,database_url=None))
         assert e.value.status_code==503
+
+
+def test_registered_model_resource_gates_and_live_assignment_retry(factory):
+    settings = Settings(_env_file=None, inference_model_id='gemma3:12b',
+                        inference_model_revision='digest', worker_timeout_seconds=300)
+    with factory.begin() as db:
+        w = Worker(name='resource-test',hostname='test',cpu='test',cpu_cores=8,
+                   ram_gb=24,ram_available_gb=1,gpu='Apple GPU',gpu_memory_kind='unified',
+                   gpu_model_memory_gb=8,supported_tasks=['summarization'],
+                   model_id='gemma3:12b',model_revision='digest')
+        db.add(w);db.flush();wid=w.id
+    with factory() as db:
+        jid=create_job(db,JobCreateRequest(task_type='summarization',inputs=['doc one','doc two']),
+                       'gemma3:12b','digest').id
+    with factory() as db:
+        assert get_next_task(db,wid,settings).task is None
+    with factory.begin() as db:
+        db.get(Worker,wid).ram_available_gb=4
+    with factory() as db:
+        first=get_next_task(db,wid,settings).task
+        assert first.job_id==jid
+    with factory.begin() as db:
+        db.get(Worker,wid).ram_available_gb=0
+        db.get(Worker,wid).cpu_utilization=99
+    with factory() as db:
+        retry=get_next_task(db,wid,settings).task
+        assert retry.assignment_id==first.assignment_id
+        assert db.get(Task,first.task_id).attempt_count==1

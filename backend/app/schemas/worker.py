@@ -52,6 +52,20 @@ class WorkerRegisterRequest(InputModel):
     benchmark_score: Positive = 1
 
 
+class WorkerLocationUpdate(InputModel):
+    location: WorkerLocation | None
+
+
+class WorkerDiscoveryRequest(InputModel):
+    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
+    task_type: str | None = Field(default=None, min_length=1, max_length=100)
+    gpu_only: bool = False
+    online_only: bool = False
+    limit: int = Field(default=100, ge=1, le=500)
+    offset: int = Field(default=0, ge=0)
+
+
 class WorkerRegisterResponse(BaseModel):
     worker_id: UUID
     heartbeat_interval_seconds: int

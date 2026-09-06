@@ -11,7 +11,7 @@ from app.services.task_service import renew_heartbeat
 from app.services import worker_service
 from app.schemas.task import NextTaskResponse
 from app.services.scheduler import get_next_task
-from app.schemas.worker import WorkerLocationsResponse
+from app.schemas.worker import WorkerLocationsResponse, WorkerLocationUpdate, WorkerDiscoveryRequest
 from app.services.locations import list_locations
 
 router = APIRouter(prefix='/workers', tags=['workers'])
@@ -39,6 +39,12 @@ def register(payload: WorkerRegisterRequest, request: Request, db: Session = Dep
     return WorkerRegisterResponse(worker_id=worker.id, heartbeat_interval_seconds=request.app.state.settings.heartbeat_interval_seconds)
 
 
+@router.post('/locations/search', response_model=WorkerLocationsResponse)
+def nearby_workers(payload: WorkerDiscoveryRequest, request: Request, db: Session = Depends(get_db)):
+    # Visitor coordinates go in the body, not URL/access-log query strings.
+    return list_locations(db, request.app.state.settings, **payload.model_dump())
+
+
 @router.get('', response_model=list[WorkerResponse])
 def workers(request: Request, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), include_history: bool = False, db: Session = Depends(get_db)):
     return worker_service.list_workers(db, request.app.state.settings.worker_timeout_seconds, limit, offset, include_history)
@@ -48,6 +54,11 @@ def workers(request: Request, limit: int = Query(100, ge=1, le=500), offset: int
 def heartbeat(worker_id: UUID, payload: HeartbeatRequest, request: Request, db: Session = Depends(get_db)):
     expiry = renew_heartbeat(db, worker_id, payload, request.app.state.settings)
     return HeartbeatResponse(lease_expires_at=expiry)
+
+
+@router.post('/{worker_id}/location', response_model=WorkerResponse)
+def set_location(worker_id: UUID, payload: WorkerLocationUpdate, request: Request, db: Session = Depends(get_db)):
+    return worker_service.update_location(db, worker_id, payload.location, request.app.state.settings.worker_timeout_seconds)
 
 
 @router.post('/{worker_id}/next-task', response_model=NextTaskResponse)

@@ -161,7 +161,7 @@ async def run_multi(args):
             'model_id': models[0].model_id, 'model_revision': models[0].model_revision,
             'models': [{'model_id': m.model_id, 'model_revision': m.model_revision,
                         'supported_tasks': m.supported_tasks} for m in models],
-            'location': location_from_args(args),
+            **({'location': location_from_args(args)} if location_from_args(args) is not None else {}),
         })
         response.raise_for_status()
         data = response.json()

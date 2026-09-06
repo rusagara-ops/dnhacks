@@ -33,3 +33,13 @@ def test_offline_pull_and_ambiguous_upload_retries(monkeypatch):
     assert len(pulls)==2 and len(completions)==2
     assert completions[0]==completions[1]
     assert completions[0]['results']==[{'index':0,'label':'POSITIVE','score':0.5}]
+
+
+def test_ui_fixtures_match_result_contracts_and_preserve_indexes():
+    from app.schemas.task import GeneratedText, ExtractionResult
+    for mode in ['summarization', 'document-qa', 'coding-assistance', 'information-extraction']:
+        results = simulated_worker.predictions({'task_type': mode, 'inputs': [{'index': 25, 'text': 'test'}]})
+        schema = ExtractionResult if mode == 'information-extraction' else GeneratedText
+        validated = schema.model_validate(results[0])
+        assert validated.index == 25
+        assert 'SIMULATION' in str(results[0])
