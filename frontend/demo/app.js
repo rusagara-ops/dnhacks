@@ -4,6 +4,14 @@ let connectionGeneration = 0, latestResult = null, latestWorkers = [], submittin
 let selectedWorkerId = '';
 let selectedActivityTaskId = '';
 let documents = [], parsing = false, parseGeneration = 0, uncertainSubmission = false;
+/* Retired registrations still own completed tasks, so telemetry resolves names from
+   the full worker history. It changes rarely; refetch only when it goes stale or a
+   task references an ID we have not seen. */
+let workerHistory = [], historyFetchedAt = 0;
+/* Submitting used to be a quiet wait: the button greyed out and nothing else moved
+   until a poll landed. This tracks the job through its stages and keeps a live
+   elapsed counter running between polls. */
+let jobStage = null, stageTicker = null;
 const jobFiles = new Map();
 function fileMode() { return document.querySelector('input[name="source-kind"]:checked').value === 'files'; }
 function saveNames(id, names) {
@@ -115,6 +123,31 @@ async function api(path, body) {
   }
   return response.json();
 }
+/* The connection pill lives in the header, so its state has to be set explicitly
+   rather than inferred from where the text happens to sit. */
+function setConnection(state, text) {
+  document.querySelector('.connect').classList.toggle('is-connected', state === 'live');
+  const pill = $('connection');
+  pill.className = `conn conn-${state}`;
+  pill.textContent = text;
+}
+const HERO_STATS = [
+  ['workers_online', 'Machines online'],
+  ['tasks_completed', 'Tasks completed'],
+  ['jobs_completed', 'Jobs completed'],
+  ['total_inferences', 'Documents processed']
+];
+function renderHeroStats(stats) {
+  const panel = $('hero-stats');
+  if (!stats) { panel.hidden = true; panel.replaceChildren(); return; }
+  panel.replaceChildren();
+  for (const [key, label] of HERO_STATS) {
+    const item = el('div', undefined, 'hero-stat');
+    item.append(el('strong', Number(stats[key] ?? 0).toLocaleString()), el('span', label));
+    panel.append(item);
+  }
+  panel.hidden = false;
+}
 function metric(card, label, value) {
   const row = el('div', undefined, 'metric');
   row.append(el('span', label), el('strong', value));
@@ -204,6 +237,7 @@ function renderWorkerPicker(workers) {
     list.append(card);
   }
   if (!relevant.length) list.append(el('p', connected ? 'No online worker supports this task and model.' : 'Connect to see available compute.', 'empty'));
+  renderDataPath(jobStage?.key || '');
   $('selected-worker').textContent = selectedWorkerId
     ? `Selected: ${relevant.find(w => w.id === selectedWorkerId)?.name || selectedWorkerId.slice(0, 8)}. This job runs on this machine.`
     : 'Choose an active machine above before submitting.';
@@ -240,8 +274,95 @@ function renderWorkers(workers, activity) {
   if (!candidates.length) $('workers').append(el('p', 'No active workers available. Start or reconnect a compatible worker.'));
   $('online').textContent = `${candidates.length} active`;
 }
+const STAGES = [
+  {key: 'sending', label: 'Sending'},
+  {key: 'queued', label: 'Queued'},
+  {key: 'running', label: 'Running'},
+  {key: 'done', label: 'Done'}
+];
+function setJobStage(key, {machine = '', model = '', failed = false} = {}) {
+  const previous = jobStage;
+  jobStage = {
+    key, failed,
+    machine: machine || previous?.machine || '',
+    model: model || previous?.model || '',
+    // Elapsed is only honest for a job this tab submitted; reopened jobs omit it.
+    startedAt: previous ? previous.startedAt : key === 'sending' ? Date.now() : null,
+    enteredAt: previous && previous.key === key ? previous.enteredAt : Date.now(),
+    finishedAt: key === 'done' ? previous?.finishedAt ?? Date.now() : null
+  };
+  renderJobStage();
+  renderDataPath(key);
+  if (key === 'done') {
+    if (stageTicker) { clearInterval(stageTicker); stageTicker = null; }
+  } else if (!stageTicker) stageTicker = setInterval(renderJobStage, 1000);
+}
+function clearJobStage() {
+  jobStage = null;
+  renderDataPath('');
+  if (stageTicker) { clearInterval(stageTicker); stageTicker = null; }
+  $('job-stage').replaceChildren();
+  $('job-stage').hidden = true;
+}
+function renderJobStage() {
+  if (!jobStage) return;
+  const panel = $('job-stage');
+  panel.hidden = false;
+  panel.replaceChildren();
+  const active = STAGES.findIndex(stage => stage.key === jobStage.key);
+  const steps = el('div', undefined, 'stage-steps');
+  for (const [index, stage] of STAGES.entries()) {
+    const state = jobStage.failed && index === active ? 'failed'
+      : index < active ? 'done' : index === active ? 'current' : 'todo';
+    const step = el('div', undefined, `stage-step stage-${state}`);
+    step.append(el('span', undefined, 'stage-dot'), el('span', stage.label, 'stage-name'));
+    steps.append(step);
+  }
+  panel.append(steps);
+  const on = jobStage.machine ? ` on ${jobStage.machine}` : '';
+  const waiting = Math.round((Date.now() - jobStage.enteredAt) / 1000);
+  const message = {
+    sending: 'Sending to the coordinator…',
+    queued: `Queued — waiting for ${jobStage.machine || 'a machine'} to claim it · ${waiting}s`,
+    running: `Running${on} · ${waiting}s`,
+    done: jobStage.failed ? `Finished with failures${on}` : `Completed${on}`
+  }[jobStage.key];
+  const line = el('p', message, `stage-message${jobStage.failed ? ' failure' : ''}`);
+  if (jobStage.startedAt !== null) {
+    const total = Math.round(((jobStage.finishedAt ?? Date.now()) - jobStage.startedAt) / 1000);
+    line.append(el('span', `${total}s since you submitted`, 'stage-total'));
+  }
+  panel.append(line);
+}
+/* The coordinator stores the job and forwards its tasks to the selected worker. */
+function renderDataPath(stage) {
+  const figure = $('data-path');
+  const worker = latestWorkers.find(candidate => candidate.id === selectedWorkerId);
+  const machine = jobStage ? jobStage.machine : worker?.name || '';
+  const model = jobStage ? jobStage.model : $('model').value;
+  if (!machine && !model) { figure.hidden = true; return; }
+  figure.hidden = false;
+  $('path-machine').textContent = machine || 'No machine chosen';
+  $('path-model').textContent = model || (jobStage ? 'Recorded job' : 'Pick a model');
+  figure.classList.toggle('path-live', stage === 'sending' || stage === 'running');
+  figure.classList.toggle('path-done', stage === 'done');
+  // Direction of travel: outbound while the job runs, inbound once results exist.
+  figure.dataset.leg = stage === 'done' ? 'back' : stage ? 'out' : 'idle';
+  $('path-note').textContent = machine
+    ? `The coordinator stores your job and results, and sends the task to ${machine}. Coordinator and worker operators can access the text.`
+    : 'The coordinator stores your job and results, and sends tasks to your selected worker. Coordinator and worker operators can access the text.';
+}
+function trackJob(data) {
+  const machine = data.tasks.map(task => task.worker_name).find(Boolean) || '';
+  if (data.status === 'COMPLETED' || data.status === 'FAILED') {
+    setJobStage('done', {machine, failed: data.status === 'FAILED'});
+  } else if (data.tasks.some(task => ['ASSIGNED', 'RUNNING'].includes(task.status))) {
+    setJobStage('running', {machine});
+  } else setJobStage('queued', {machine});
+}
 function renderResults(data) {
-  latestResult = data; $('download-result').disabled = false;
+  latestResult = data; $('download-result').disabled = false; $('copy-result').disabled = !data.results.length;
+  trackJob(data);
   $('status').textContent = data.status;
   $('progress').max = data.total_inputs;
   $('progress').value = data.completed_inputs + data.failed_inputs;
@@ -271,9 +392,11 @@ function renderResults(data) {
   }
 }
 async function openJob(id, mode) {
+  const generation = connectionGeneration;
+  if (id !== jobId) clearJobStage();
   jobId = id; jobMode = mode; $('result-title').textContent = mode;
-  try { const result = await api(`/jobs/${id}/results`); if (connected && jobId === id) renderResults(result); }
-  catch (error) { $('error').textContent = error.message; }
+  try { const result = await api(`/jobs/${id}/results`); if (connected && generation === connectionGeneration && jobId === id) renderResults(result); }
+  catch (error) { if (generation === connectionGeneration) $('error').textContent = error.message; }
 }
 function formatTaskType(value) {
   return String(value || 'Task').replace(/[-_]/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
@@ -336,14 +459,14 @@ function showActivityDetail(task) {
   panel.append(open);
   panel.hidden = false;
 }
-function renderActivity(data, workers) {
-  const counts = data.task_counts || {};
+function machineStatusLabel(machine) {
+  if (machine.activeTasks.length) return 'WORKING';
+  return machine.online ? 'ONLINE' : 'OFFLINE';
+}
+function renderOverview(summary) {
   const cards = {
-    Queued: counts.QUEUED || 0,
-    Active: (counts.RUNNING || 0) + (counts.ASSIGNED || 0),
-    Completed: counts.COMPLETED || 0,
-    Failed: counts.FAILED || 0,
-    Retries: data.retries || 0
+    Queued: summary.queued, Active: summary.active, Completed: summary.completed,
+    Failed: summary.failed, Retries: summary.retries
   };
   $('overview').replaceChildren();
   for (const [label, value] of Object.entries(cards)) {
@@ -351,53 +474,124 @@ function renderActivity(data, workers) {
     card.append(el('strong', String(value)), el('span', label));
     $('overview').append(card);
   }
-  $('activity-updated').textContent = data.as_of ? `Updated ${new Date(data.as_of).toLocaleTimeString()}` : 'Live coordinator data';
-
-  const activeByWorker = new Map();
-  for (const task of data.active_tasks || []) {
-    if (!activeByWorker.has(task.worker_id)) activeByWorker.set(task.worker_id, []);
-    activeByWorker.get(task.worker_id).push(task);
+}
+function renderShareChart(machines) {
+  const holder = $('share-chart'), legend = $('share-legend');
+  holder.replaceChildren(); legend.replaceChildren();
+  const contributors = machines.filter(machine => machine.completedTasks > 0);
+  const total = contributors.reduce((sum, machine) => sum + machine.completedTasks, 0);
+  if (!total) {
+    holder.append(el('p', 'No completed tasks yet.', 'empty'));
+    return;
   }
-  const recentByWorker = new Map();
-  for (const task of data.recent_tasks || []) {
-    if (task.worker_id) {
-      if (!recentByWorker.has(task.worker_id)) recentByWorker.set(task.worker_id, []);
-      recentByWorker.get(task.worker_id).push(task);
+  holder.append(Charts.donut(
+    contributors.map((machine, index) => ({
+      label: machine.name, value: machine.completedTasks, color: Charts.colorFor(index)
+    })),
+    {centerValue: total, centerLabel: total === 1 ? 'task' : 'tasks'}
+  ));
+  for (const [index, machine] of contributors.entries()) {
+    const item = el('li', undefined, 'legend-item');
+    const swatch = el('span', undefined, 'swatch');
+    swatch.style.background = Charts.colorFor(index);
+    const text = el('div', undefined, 'legend-text');
+    text.append(el('strong', machine.name));
+    const detail = `${machine.completedTasks} ${machine.completedTasks === 1 ? 'task' : 'tasks'} · ${Charts.percent(machine.completedTasks, total)}%`;
+    text.append(el('span', detail));
+    item.append(swatch, text);
+    item.append(el('span', machineStatusLabel(machine), `legend-status status-${machineStatusLabel(machine).toLowerCase()}`));
+    legend.append(item);
+  }
+}
+function renderTypeMix(machines, fullHistory) {
+  const chart = $('mix-chart'), legend = $('type-legend');
+  chart.replaceChildren(); legend.replaceChildren();
+  $('mix-scope').textContent = fullHistory ? 'By task type · all completed work' : 'By task type · last 30 tasks';
+  const totals = Telemetry.typeTotals(machines);
+  if (!totals.length) {
+    chart.append(el('p', 'No completed tasks to break down yet.', 'empty'));
+    return;
+  }
+  for (const entry of totals) {
+    const item = el('span', undefined, 'legend-chip');
+    const swatch = el('span', undefined, 'swatch');
+    swatch.style.background = Charts.TYPE_COLORS[entry.type] || '#7a8596';
+    item.append(swatch, el('span', `${entry.label} · ${entry.count}`));
+    legend.append(item);
+  }
+  const rows = machines.filter(machine => machine.byType.size);
+  const max = Math.max(...rows.map(machine => [...machine.byType.values()].reduce((a, b) => a + b, 0)), 1);
+  for (const machine of rows) {
+    const row = el('div', undefined, 'mix-row');
+    const label = el('div', undefined, 'mix-label');
+    const counted = [...machine.byType.values()].reduce((a, b) => a + b, 0);
+    label.append(el('strong', machine.name), el('span', `${counted} ${counted === 1 ? 'task' : 'tasks'}`));
+    row.append(label);
+    const segments = Telemetry.TASK_TYPES
+      .filter(type => machine.byType.get(type))
+      .map(type => ({type, label: Telemetry.LABELS[type] || type, value: machine.byType.get(type)}));
+    for (const [type, value] of machine.byType) {
+      if (!Telemetry.TASK_TYPES.includes(type)) segments.push({type, label: type, value});
     }
+    row.append(Charts.stackedBar(segments, max));
+    const detail = el('div', undefined, 'mix-detail');
+    for (const segment of segments) detail.append(el('span', `${segment.label} ${segment.value}`));
+    row.append(detail);
+    chart.append(row);
   }
-  const metricsByWorker = new Map((data.worker_metrics || []).map(item => [item.worker_id, item]));
+}
+function renderMachines(machines) {
   const distribution = $('distribution');
   distribution.replaceChildren();
-  const workerRows = uniqueWorkers(workers).filter(worker => activeByWorker.has(worker.id) || recentByWorker.has(worker.id) || metricsByWorker.has(worker.id));
-  for (const worker of workerRows) {
-    const active = activeByWorker.get(worker.id) || [];
-    const recent = recentByWorker.get(worker.id) || [];
-    const metricData = metricsByWorker.get(worker.id);
-    const card = el('article', undefined, 'distribution-card');
+  for (const machine of machines) {
+    const card = el('article', undefined, `distribution-card${machine.activeTasks.length ? ' working' : ''}`);
     const header = el('div', undefined, 'distribution-header');
-    header.append(el('strong', worker.name), el('span', worker.status, `badge ${worker.status === 'OFFLINE' ? 'offline' : 'available'}`));
+    const status = machineStatusLabel(machine);
+    header.append(el('strong', machine.name), el('span', status, `badge status-${status.toLowerCase()}`));
     card.append(header);
+    card.append(el('p', machine.models.join(' · ') || 'Model not reported', 'distribution-models'));
     const stats = el('div', undefined, 'distribution-stats');
-    stats.append(el('span', `${active.length} active now`), el('span', `${metricData?.completed_tasks || 0} completed`), el('span', metricData ? `avg ${(metricData.average_execution_ms / 1000).toFixed(1)}s` : 'No timing yet'));
+    stats.append(
+      el('span', `${machine.completedTasks} completed`),
+      el('span', `${machine.activeTasks.length} active now`),
+      el('span', machine.averageExecutionMs ? `avg ${(machine.averageExecutionMs / 1000).toFixed(1)}s` : 'No timing yet')
+    );
+    if (machine.registrations > 1) stats.append(el('span', `${machine.registrations} registrations`));
     card.append(stats);
-    if (active.length) {
+    const timings = machine.recentTasks
+      .filter(task => Number.isFinite(task.execution_time_ms))
+      .slice(0, 12).reverse().map(task => task.execution_time_ms);
+    if (timings.length > 1) {
+      const trend = el('div', undefined, 'distribution-trend');
+      trend.append(Charts.sparkline(timings), el('small', 'Recent execution time'));
+      card.append(trend);
+    }
+    if (machine.activeTasks.length) {
       const current = el('div', undefined, 'current-work');
       current.append(el('small', 'RUNNING ON THIS COMPUTER'));
-      for (const task of active) {
+      for (const task of machine.activeTasks) {
         const row = el('div', undefined, 'task-owner-row');
-        row.append(el('strong', task.task_type), el('span', `${task.status} · ${task.elapsed_seconds ?? 0}s`));
+        row.append(el('strong', formatTaskType(task.task_type)), el('span', `${task.status} · ${task.elapsed_seconds ?? 0}s`));
         const button = el('button', `Job ${task.job_id.slice(0, 8)}`, 'subtle');
         button.onclick = () => openJob(task.job_id, task.task_type);
         row.append(button); current.append(row);
       }
       card.append(current);
-    } else if (recent.length) {
-      const last = recent[0];
-      card.append(el('p', `Last task: ${last.task_type} · ${last.status}`, 'last-work'));
+    } else if (machine.lastTask) {
+      card.append(el('p', `Last task: ${formatTaskType(machine.lastTask.task_type)} · ${machine.lastTask.status}`, 'last-work'));
     } else card.append(el('p', 'No task history yet.', 'last-work'));
     distribution.append(card);
   }
-  if (!workerRows.length) distribution.append(el('p', 'No task assignments recorded yet. Submit a job to see which computer claims it.', 'empty'));
+  if (!machines.length) distribution.append(el('p', 'No task assignments recorded yet. Submit a job to see which computer claims it.', 'empty'));
+}
+function renderActivity(data, workers) {
+  renderOverview(Telemetry.summary(data));
+  $('activity-updated').textContent = data.as_of ? `Updated ${new Date(data.as_of).toLocaleTimeString()}` : 'Live coordinator data';
+
+  const machines = Telemetry.machines(data, workers);
+  renderShareChart(machines);
+  renderTypeMix(machines, Telemetry.hasFullTypeHistory(data));
+  renderMachines(machines);
 
   $('activity').replaceChildren();
   for (const task of (data.recent_tasks || []).slice(0, 12)) {
@@ -417,25 +611,60 @@ function renderActivity(data, workers) {
   if (selected) showActivityDetail(selected);
   else if (!(data.recent_tasks || []).length) $('activity-detail').hidden = true;
 }
+async function ensureWorkerHistory(activity, live, generation) {
+  const referenced = new Set([
+    ...(activity.worker_metrics || []).map(metric => metric.worker_id),
+    ...(activity.active_tasks || []).map(task => task.worker_id),
+    ...(activity.recent_tasks || []).map(task => task.worker_id),
+    ...(activity.worker_task_types || []).map(row => row.worker_id)
+  ].filter(Boolean));
+  const known = new Set(workerHistory.map(worker => worker.id));
+  if (Date.now() - historyFetchedAt >= 30000 || [...referenced].some(id => !known.has(id))) {
+    try {
+      const history = [];
+      for (let offset = 0; ; offset += 500) {
+        const page = await api(`/workers?limit=500&include_history=true&offset=${offset}`);
+        if (!connected || generation !== connectionGeneration) return [];
+        history.push(...page);
+        if (page.length < 500) break;
+      }
+      workerHistory = history;
+      historyFetchedAt = Date.now();
+    } catch {
+      // Unknown historical IDs remain separate; never guess identity from names.
+    }
+  }
+  // Cached history resolves identity; each fresh poll supplies current presence.
+  const merged = new Map(workerHistory.map(worker => [worker.id, {...worker, status: 'OFFLINE'}]));
+  for (const worker of live) merged.set(worker.id, worker);
+  return [...merged.values()];
+}
 async function refresh() {
   if (polling || !connected) return;
   polling = true;
   const generation = connectionGeneration;
   try {
-    const [workers, activity] = await Promise.all([api('/workers?limit=500'), api('/activity')]);
+    const [workers, activity, stats] = await Promise.all([
+      api('/workers?limit=500'), api('/activity'),
+      // Older coordinators may not expose /stats; the hero simply stays hidden.
+      api('/stats').catch(() => null)
+    ]);
     if (!connected || generation !== connectionGeneration) return;
+    renderHeroStats(stats);
     latestWorkers = workers;
-    renderModels(); renderWorkerPicker(workers); renderWorkers(workers, activity); renderActivity(activity, workers);
+    const history = await ensureWorkerHistory(activity, workers, generation);
+    if (!connected || generation !== connectionGeneration) return;
+    renderModels(); renderWorkerPicker(workers); renderWorkers(workers, activity); renderActivity(activity, history);
     if (jobId) {
       const selectedJob = jobId;
       const result = await api(`/jobs/${selectedJob}/results`);
       if (!connected || generation !== connectionGeneration || selectedJob !== jobId) return;
       renderResults(result);
     }
-    $('connection').textContent = 'Connected · live updates';
+    setConnection('live', 'Connected · live updates');
   } catch (error) {
     if (generation !== connectionGeneration) return;
-    $('connection').textContent = 'Connection interrupted — retrying'; $('error').textContent = error.message;
+    setConnection('warn', 'Connection interrupted — retrying'); $('error').textContent = error.message;
   } finally { polling = false; }
 }
 function rememberToken(value) {
@@ -447,11 +676,13 @@ $('show-token').onclick = () => {
   const show = $('token').type === 'password'; $('token').type = show ? 'text' : 'password'; $('show-token').textContent = show ? 'Hide token' : 'Show token';
 };
 $('disconnect').onclick = () => {
-  latestResult = null; $('download-result').disabled = true; connectionGeneration++; uncertainSubmission = false; $('retry-submission').hidden = true; connected = false; token = ''; rememberToken('');
+  latestResult = null; $('download-result').disabled = true; $('copy-result').disabled = true; connectionGeneration++; uncertainSubmission = false; $('retry-submission').hidden = true; connected = false; token = ''; rememberToken('');
   latestWorkers = []; selectedWorkerId = ''; $('model').value = ''; renderModels(); renderWorkerPicker([]);
   $('token').value = ''; $('token').type = 'password'; $('show-token').textContent = 'Show token';
-  $('submit').disabled = true; $('disconnect').hidden = true; $('connection').textContent = 'Disconnected';
-  for (const id of ['workers', 'overview', 'distribution', 'activity', 'results']) $(id).replaceChildren();
+  $('submit').disabled = true; $('disconnect').hidden = true; setConnection('idle', 'Disconnected');
+  workerHistory = []; historyFetchedAt = 0; clearJobStage(); renderHeroStats(null);
+  jobId = null; $('status').textContent = 'No job yet'; $('job').textContent = 'Submit a document to begin.'; $('progress').value = 0;
+  for (const id of ['workers', 'overview', 'distribution', 'activity', 'results', 'share-chart', 'share-legend', 'type-legend', 'mix-chart']) $(id).replaceChildren();
   $('activity-detail').replaceChildren(); $('activity-detail').hidden = true; selectedActivityTaskId = '';
   $('activity-updated').textContent = 'Waiting for a connection';
 };
@@ -462,7 +693,7 @@ $('connect').onclick = async () => {
     await api('/workers?limit=1'); connectionGeneration++; connected = true; rememberToken($('remember-token').checked ? token : '');
     $('submit').disabled = false; $('disconnect').hidden = false; $('error').textContent = ''; await refresh();
   } catch (error) {
-    connected = false; rememberToken(''); $('submit').disabled = true; $('connection').textContent = 'Not connected'; $('error').textContent = error.message;
+    connected = false; rememberToken(''); $('submit').disabled = true; setConnection('idle', 'Not connected'); $('error').textContent = error.message;
   } finally { $('connect').disabled = false; }
 };
 $('token').addEventListener('keydown', event => { if (event.key === 'Enter') $('connect').click(); });
@@ -483,6 +714,13 @@ $('submit').onclick = async () => {
   if (mode === 'document-qa' && !instruction) { $('error').textContent = 'Enter a question about the document.'; return; }
   submitting = true; $('submit').disabled = true; renderDocuments();
   $('error').textContent = '';
+  jobId = null; latestResult = null; $('results').replaceChildren();
+  $('download-result').disabled = true; $('copy-result').disabled = true; $('progress').value = 0;
+  clearJobStage(); setJobStage('sending', {
+    machine: latestWorkers.find(worker => worker.id === selectedWorkerId)?.name || '', model: $('model').value
+  });
+  $('status').textContent = 'Submitting';
+  $('job').textContent = 'Handing the job to the coordinator…';
   let accepted = false;
   try {
     const job = await api('/jobs', { task_type: mode, model_id: $('model').value, inputs, optimization: 'fastest', target_worker_id: selectedWorkerId, ...(instruction ? {instruction} : {}) });
@@ -490,10 +728,12 @@ $('submit').onclick = async () => {
     if (generation !== connectionGeneration || !connected) return;
     jobId = job.job_id;
     jobMode = mode;
+    setJobStage('queued');
     $('result-title').textContent = {summarization: 'Document summary', 'document-qa': 'Answer', 'information-extraction': 'Extracted information', 'coding-assistance': 'Code assistance'}[mode];
     await refresh();
   } catch (error) {
     if (generation !== connectionGeneration) return;
+    clearJobStage();
     uncertainSubmission = !accepted && (!error.status || error.status >= 500);
     $('error').textContent = uncertainSubmission ? 'Submission could not be confirmed. Check recent task activity before trying again; a job may already exist.' : error.message;
     $('retry-submission').hidden = !uncertainSubmission;
@@ -501,6 +741,32 @@ $('submit').onclick = async () => {
   finally { submitting = false; renderDocuments(); }
 };
 setInterval(refresh, 2000);
+function resultText(data) {
+  return data.results.map((entry, index) => {
+    const name = namesFor(data.job_id)[entry.index] || `Document ${entry.index + 1}`;
+    if ('names' in entry) {
+      return [name, `Names: ${entry.names.join(', ') || '—'}`, `Dates: ${entry.dates.join(', ') || '—'}`,
+              `Amounts: ${entry.amounts.join(', ') || '—'}`, `Action items: ${entry.action_items.join(', ') || '—'}`].join('\n');
+    }
+    return data.results.length > 1 ? `${name}\n${entry.text}` : entry.text;
+  }).join('\n\n');
+}
+$('copy-result').onclick = async () => {
+  if (!latestResult) return;
+  try {
+    await navigator.clipboard.writeText(resultText(latestResult));
+    $('copy-result').textContent = 'Copied';
+  } catch {
+    $('copy-result').textContent = 'Copy blocked by browser';
+  }
+  setTimeout(() => { $('copy-result').textContent = 'Copy result'; }, 1600);
+};
+// Submitting from the keyboard without reaching for the mouse.
+for (const id of ['inputs', 'instruction']) {
+  $(id).addEventListener('keydown', event => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !$('submit').disabled) $('submit').click();
+  });
+}
 $('download-result').onclick = () => {
   if (!latestResult) return;
   const url = URL.createObjectURL(new Blob([JSON.stringify({...latestResult, source_files: namesFor(latestResult.job_id).map((name,index) => ({index,name}))}, null, 2)], {type: 'application/json'}));

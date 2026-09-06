@@ -7,22 +7,34 @@
   <link rel="stylesheet" href="/demo/style.css">
 </head>
 <body>
-  <header><span class="brand">SC / STRANDED COMPUTE</span><span>LOCAL DEMO · MULTI-MODEL</span></header>
-  <main>
-    <section class="intro">
-      <p class="eyebrow">YOUR DOCUMENT. YOUR PRIVATE COMPUTE.</p>
-      <h1>Your tasks.<br>Your private compute.</h1>
-      <p>Summarize, ask questions, extract details, or get code help. Choose a model running on a connected computer and submit from any laptop.</p>
-    </section>
+  <header>
+    <a class="brand" href="#top"><span class="mark" aria-hidden="true">s/c</span> STRANDED COMPUTE</a>
+    <span id="connection" class="conn conn-idle" role="status">Not connected</span>
+  </header>
+  <main id="top">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">LOCAL DEMO · MULTI-MODEL</p>
+        <h1>Your tasks.<br>Your chosen compute.</h1>
+        <p class="lede">Summarize, ask questions, extract details, or get code help. Choose a model running on a connected computer. The coordinator stores your job and delivers it to that worker.</p>
+        <div id="hero-stats" class="hero-stats" hidden></div>
+      </div>
 
-    <section class="connect">
-      <label>Coordinator API token <input id="token" type="password" placeholder="Enter backend API_TOKEN" autocomplete="off"></label>
-      <button id="show-token" type="button">Show token</button>
-      <button id="connect">Connect</button>
-      <button id="disconnect" type="button" hidden>Disconnect</button>
-      <span id="connection" role="status">Not connected</span>
+      <section class="connect" aria-labelledby="connect-title">
+        <h2 id="connect-title">Connect to a coordinator</h2>
+        <p class="connect-host">Coordinator <span id="coordinator-url"></span></p>
+        <label for="token">Coordinator API token</label>
+        <div class="token-row">
+          <input id="token" type="password" placeholder="Enter backend API_TOKEN" autocomplete="off">
+          <button id="show-token" type="button" class="subtle">Show</button>
+        </div>
+        <div class="connect-actions">
+          <button id="connect">Connect</button>
+          <button id="disconnect" type="button" class="subtle" hidden>Disconnect</button>
+        </div>
+        <label class="remember"><input id="remember-token" type="checkbox"> Remember token for this tab only</label>
+      </section>
     </section>
-    <p class="muted">Coordinator: <span id="coordinator-url"></span> · <label class="remember"><input id="remember-token" type="checkbox"> Remember token for this tab only</label></p>
 
     <section class="compute-explorer" aria-labelledby="explorer-title">
       <div class="section-title">
@@ -36,38 +48,23 @@
       </div>
     </section>
 
-    <section aria-labelledby="machines-title">
-      <div class="section-title"><h2 id="machines-title">Active compute machines</h2><span id="online">— active</span></div>
-      <div id="workers" class="workers"><p>Connect to see workers.</p></div>
-    </section>
-
-    <section class="telemetry" aria-labelledby="telemetry-title">
-      <div class="section-title">
-        <div><p class="eyebrow">COORDINATOR TELEMETRY</p><h2 id="telemetry-title">Work distribution</h2></div>
-        <span id="activity-updated">Waiting for a connection</span>
-      </div>
-      <p class="muted">Live ownership and execution data from the coordinator. Each task shows the computer that claimed it.</p>
-      <div id="overview" class="overview"></div>
-      <div id="distribution" class="distribution"><p class="empty">Connect to view task distribution.</p></div>
-      <div class="activity-heading"><h3>Recent task activity</h3><span class="muted">Newest first</span></div>
-      <div id="activity" class="activity-feed"><p>Connect to see task ownership and queue activity.</p></div>
-      <aside id="activity-detail" class="activity-detail" hidden aria-live="polite"></aside>
-    </section>
-
     <section class="task-choice">
-      <label for="mode">Choose a task</label>
-      <select id="mode">
-        <option value="summarization">Summarize</option>
-        <option value="document-qa">Document Q&amp;A</option>
-        <option value="information-extraction">Extract information</option>
-        <option value="coding-assistance">Coding assistance</option>
-      </select>
-      <label for="model" class="model-label">Choose a model</label>
-      <select id="model" aria-describedby="model-help" disabled><option value="">Select a model</option></select>
-      <p id="model-help" class="muted" role="status">Connect to see available models.</p>
-      <p id="mode-help" class="muted">One coherent summary of your entire document.</p>
+      <div class="field">
+        <label for="mode">Choose a task</label>
+        <select id="mode">
+          <option value="summarization">Summarize</option>
+          <option value="document-qa">Document Q&amp;A</option>
+          <option value="information-extraction">Extract information</option>
+          <option value="coding-assistance">Coding assistance</option>
+        </select>
+        <p id="mode-help" class="muted">One coherent summary of your entire document.</p>
+      </div>
+      <div class="field">
+        <label for="model" class="model-label">Choose a model</label>
+        <select id="model" aria-describedby="model-help" disabled><option value="">Select a model</option></select>
+        <p id="model-help" class="muted" role="status">Connect to see available models.</p>
+      </div>
     </section>
-
     <section class="workspace">
       <div class="panel">
         <div class="section-title"><h2 id="source-title">Source document</h2><button id="sample" class="subtle">Load example</button></div>
@@ -78,14 +75,69 @@
       </div>
       <div class="panel">
         <div class="section-title"><h2 id="result-title">Result</h2><span id="status">No job yet</span></div>
+        <figure id="data-path" class="data-path" hidden>
+          <div class="path-row">
+            <div class="path-node"><span class="path-icon" aria-hidden="true">▤</span><strong>This browser</strong><span>Your document</span></div>
+            <div class="path-link"><span class="path-line"></span><small>via coordinator</small></div>
+            <div class="path-node path-machine"><span class="path-icon" aria-hidden="true">▣</span><strong id="path-machine">No machine chosen</strong><span id="path-model">Pick a model</span></div>
+            <div class="path-link"><span class="path-line"></span><small>via coordinator</small></div>
+            <div class="path-node"><span class="path-icon" aria-hidden="true">▤</span><strong>This browser</strong><span>View the result</span></div>
+          </div>
+          <figcaption id="path-note">The coordinator stores your job and results, and sends tasks to your selected worker.</figcaption>
+        </figure>
         <progress id="progress" value="0" max="1"></progress>
+        <div id="job-stage" class="job-stage" role="status" aria-live="polite" hidden></div>
         <p id="job" class="muted">Submit a document to begin.</p>
-        <button id="download-result" class="subtle" disabled>Download result JSON</button>
-        <div id="results"><p class="empty">Each result will show its source Mac and runtime.</p></div>
+        <div id="results"><p class="empty">Pick a machine, paste a document, and the result appears here with the machine that produced it.</p></div>
+        <div class="result-actions">
+          <button id="copy-result" class="subtle" disabled>Copy result</button>
+          <button id="download-result" class="subtle" disabled>Download result JSON</button>
+        </div>
       </div>
+    </section>
+    <section class="telemetry" aria-labelledby="telemetry-title">
+      <div class="section-title">
+        <div><p class="eyebrow">COORDINATOR TELEMETRY</p><h2 id="telemetry-title">Work distribution</h2></div>
+        <span id="activity-updated">Waiting for a connection</span>
+      </div>
+      <p class="muted">Live ownership and execution data from the coordinator. Totals use persistent device IDs; older registrations without a device ID stay separate. Execution times are worker-reported and exclude queue and network time.</p>
+      <div id="overview" class="overview"></div>
+
+      <div class="charts">
+        <article class="chart-card">
+          <div class="chart-heading">
+            <h3>Tasks per computer</h3>
+            <span class="muted">All completed work</span>
+          </div>
+          <div class="donut-layout">
+            <div id="share-chart" class="donut-holder"></div>
+            <ul id="share-legend" class="legend"></ul>
+          </div>
+        </article>
+        <article class="chart-card">
+          <div class="chart-heading">
+            <h3>What each computer ran</h3>
+            <span id="mix-scope" class="muted">By task type</span>
+          </div>
+          <div id="type-legend" class="legend legend-inline"></div>
+          <div id="mix-chart" class="mix-chart"><p class="empty">Connect to view the task mix.</p></div>
+        </article>
+      </div>
+
+      <div class="machines-heading"><h3>Per-computer detail</h3><span class="muted">Includes earlier registrations</span></div>
+      <div id="distribution" class="distribution"><p class="empty">Connect to view task distribution.</p></div>
+      <div class="activity-heading"><h3>Recent task activity</h3><span class="muted">Newest first</span></div>
+      <div id="activity" class="activity-feed"><p>Connect to see task ownership and queue activity.</p></div>
+      <aside id="activity-detail" class="activity-detail" hidden aria-live="polite"></aside>
+    </section>
+    <section aria-labelledby="machines-title">
+      <div class="section-title"><h2 id="machines-title">Active compute machines</h2><span id="online">— active</span></div>
+      <div id="workers" class="workers"><p>Connect to see workers.</p></div>
     </section>
     <p id="error" role="alert"></p>
   </main>
+  <script src="/demo/telemetry.js"></script>
+  <script src="/demo/charts.js"></script>
   <script src="/demo/documents.js"></script>
   <script src="/demo/app.js"></script>
 </body>

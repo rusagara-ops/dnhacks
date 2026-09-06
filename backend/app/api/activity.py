@@ -36,8 +36,15 @@ def activity(db: Session=Depends(get_db)):
     completed=db.execute(select(TaskResult.worker_id,func.count(),
         func.sum(func.jsonb_array_length(TaskResult.result)),func.avg(TaskResult.execution_time_ms))
         .group_by(TaskResult.worker_id)).all()
+    # Count accepted results by worker and type. The dashboard resolves identity
+    # through worker history without merging unrelated devices by display name.
+    by_type=db.execute(select(TaskResult.worker_id,Job.task_type,func.count())
+        .join(Task,Task.id==TaskResult.task_id)
+        .join(Job,Job.id==Task.job_id)
+        .group_by(TaskResult.worker_id,Job.task_type)).all()
     counts=dict(db.execute(select(Task.status,func.count()).group_by(Task.status)).all())
     retries=db.scalar(select(func.coalesce(func.sum(func.greatest(Task.attempt_count-1,0)),0)))
     return dict(as_of=now,active_tasks=[describe(r) for r in active],recent_tasks=[describe(r) for r in recent],
                 task_counts=counts,retries=retries,worker_metrics=[dict(worker_id=w,completed_tasks=count,
-                completed_inputs=inputs,average_execution_ms=round(float(avg),1)) for w,count,inputs,avg in completed])
+                completed_inputs=inputs,average_execution_ms=round(float(avg),1)) for w,count,inputs,avg in completed],
+                worker_task_types=[dict(worker_id=w,task_type=kind,completed_tasks=count) for w,kind,count in by_type])

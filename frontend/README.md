@@ -1,9 +1,41 @@
 # Frontend applications
 
-- **Demo dashboard:** [`demo/index.html`](demo/index.html), served by the coordinator at `http://localhost:8000/demo/`. This is the dashboard with the compute map, machine cards, and model selector. Edit `demo/app.js`, `demo/locations.js`, and `demo/style.css`. Start the coordinator from `backend/`; this dashboard calls the API on the same origin and needs no separate frontend server.
+- **Demo dashboard:** [`demo/index.html`](demo/index.html), served by the coordinator at `http://localhost:8000/demo/`. It includes machine selection, document uploads, job progress, and work-distribution charts. Edit `demo/app.js`, `demo/telemetry.js`, `demo/charts.js`, and `demo/style.css`. Start the coordinator from `backend/`; this dashboard calls the API on the same origin and needs no separate frontend server.
 - **Ronald’s React dashboard:** `src/`, served by Vite at `http://localhost:5173/`. Its setup instructions follow.
 
 The demo lives entirely under `frontend/demo/`; the backend only mounts its static files. The public `/demo/` URL is unchanged.
+
+## Demo progress and telemetry
+
+Submission displays Sending, Queued, Running, and Done, with a browser-observed
+elapsed counter for jobs submitted in that tab. Completed elapsed time freezes;
+reopened jobs do not invent a submission timestamp. Results can be copied or
+downloaded. The data-path diagram identifies the selected worker and explains
+that the coordinator stores jobs/results and operators can inspect the text.
+
+Charts show accepted tasks per computer and task-type totals from
+`/api/activity.worker_task_types`. Older coordinators fall back to their recent
+30-task window, labeled accordingly. Worker history is paginated and cached for
+30 seconds; fresh worker polling updates presence. Aggregation uses persistent
+device IDs, with worker IDs as the fallback. Similar names/hostnames do not merge
+different devices, and legacy rows without a shared device ID remain separate.
+Execution times are worker-reported and exclude queue/network time.
+
+For local UI development against an existing coordinator, from `frontend/`:
+
+```zsh
+COORDINATOR_URL=http://127.0.0.1:8000 npm run dev
+```
+
+Open the printed Vite origin plus `/demo/`. The development proxy forwards `/api`
+to `COORDINATOR_URL`; use the actual coordinator address when it is elsewhere.
+The React dashboard at `/` continues to support its explicit backend origin.
+Production `/demo/` remains served by FastAPI. These changes require no database
+migration; restart the updated backend for the full task-type history field.
+
+From `frontend/demo/`, run `node --test tests/*.test.cjs` for document/telemetry
+unit tests and `npm test` for browser tests. Browser tests use mock coordinator
+responses; they do not verify real GPU execution or Abel's deployment.
 
 # Ronald — Stranded Compute frontend
 
