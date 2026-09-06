@@ -454,3 +454,11 @@ Migration `78ccab156bc1` adds a nullable unique `workers.device_id`. Updated wor
 The dashboard adds recent jobs, result JSON download, connection status, show/hide token, Enter-to-connect, optional sessionStorage remembering, and Disconnect. Remembering is opt-in and tab-scoped; Disconnect removes the stored token. The token is never put in a URL or downloaded result.
 
 See `backend/TEAM_HANDOFF.md` for Abel/Kevin/Ronald ownership and acceptance checks.
+
+### Backend-only connection and legacy-registration cleanup
+
+`GET /api/workers` now filters superseded offline legacy records before pagination. Add `include_history=true` for historical registrations. Modern device IDs are never collapsed by name or hostname. Old clients without device IDs reuse an exact hostname/name/model/revision registration under a transaction lock; upgrading to persistent device IDs is still preferred.
+
+`GET /api/connection` checks the bearer token and returns non-secret model, task-type, size-limit and heartbeat configuration. `worker/connect.py --url http://COORDINATOR:8000` prompts privately for a token and verifies the connection. Add `--start-worker --name NAME` only on the compute host. It does not persist the token or put it in command-line arguments.
+
+`TEAM_HANDOFF.md` now assigns backend/worker work to all three teammates: Abel owns coordinator lifecycle and identity; Kevin owns worker runtime/telemetry; Ronald owns backend observability and connection tooling. No frontend work is assigned.
