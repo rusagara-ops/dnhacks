@@ -12,18 +12,32 @@ MODEL_REVISION = 'v1'
 
 
 def predictions(task):
+    kind = task.get('task_type', 'sentiment-classification')
+    if kind == 'information-extraction':
+        return [{'index': item['index'], 'names': ['SIMULATION: Example Person'],
+                 'dates': [], 'amounts': [], 'action_items': ['SIMULATION: review this test fixture.']}
+                for item in task['inputs']]
+    if kind != 'sentiment-classification':
+        return [{'index': item['index'], 'text':
+                 f"SIMULATION ONLY — {kind}. No AI model was run.\n\n"
+                 'This fixture confirms submission, assignment, and result display.\n'
+                 + ('\n# Simulated code output\ndef example():\n    return 42\n' if kind == 'coding-assistance' else '')}
+                for item in task['inputs']]
     return [{'index': item['index'], 'label': 'POSITIVE' if item['index'] % 2 == 0 else 'NEGATIVE',
              'score': 0.5} for item in task['inputs']]
 
 
 async def run(args):
+    ui_modes = getattr(args, 'ui_modes', False)
+    model_id = 'simulation/ui' if ui_modes else MODEL_ID
+    supported = ['sentiment-classification', 'summarization', 'document-qa', 'information-extraction', 'coding-assistance'] if ui_modes else ['sentiment-classification']
     token = os.environ.get('API_TOKEN', '')
     headers = {'Authorization': f'Bearer {token}'} if token else {}
     async with httpx.AsyncClient(base_url=args.url.rstrip('/'), headers=headers, timeout=10) as client:
         response = await client.post('/api/workers/register', json={
             'name': args.name, 'hostname': 'simulated-worker', 'cpu': 'SIMULATED', 'cpu_cores': 1,
-            'ram_gb': 1, 'supported_tasks': ['sentiment-classification'],
-            'model_id': MODEL_ID, 'model_revision': MODEL_REVISION,
+            'ram_gb': 1, 'supported_tasks': supported,
+            'model_id': model_id, 'model_revision': MODEL_REVISION,
         })
         response.raise_for_status()
         worker = response.json()['worker_id']
@@ -71,7 +85,7 @@ async def run(args):
                         return 0
                     await asyncio.sleep(args.poll_seconds)
                     continue
-                if task['model_id'] != MODEL_ID or task['model_revision'] != MODEL_REVISION:
+                if task['model_id'] != model_id or task['model_revision'] != MODEL_REVISION:
                     raise RuntimeError('Simulator received a non-simulation model')
                 active = task
                 lost.clear()
@@ -125,6 +139,7 @@ def main():
     parser.add_argument('--max-tasks', type=int, default=100)
     parser.add_argument('--crash-after-claim', action='store_true')
     parser.add_argument('--fail-tasks', action='store_true')
+    parser.add_argument('--ui-modes', action='store_true', help='Fabricated fixtures for all UI modes; requires simulation/ui model with revision v1')
     args = parser.parse_args()
     if min(args.delay,args.poll_seconds,args.idle_timeout) <= 0 or args.max_tasks < 1:
         parser.error('Durations and max-tasks must be positive')

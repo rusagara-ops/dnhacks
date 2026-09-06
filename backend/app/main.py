@@ -14,6 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.workers import router
 from app.api.jobs import router as jobs_router
+from app.api.models import router as models_router
 from app.api.tasks import router as tasks_router
 from app.api.stats import router as stats_router
 from app.api.activity import router as activity_router
@@ -74,6 +75,7 @@ def create_app(settings: Settings | None = None):
     app.include_router(activity_router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(stats_router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(tasks_router, prefix='/api', dependencies=[Depends(require_token)])
+    app.include_router(models_router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(jobs_router, prefix='/api', dependencies=[Depends(require_token)])
 
     @app.exception_handler(SQLAlchemyError)

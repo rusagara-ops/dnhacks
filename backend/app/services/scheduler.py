@@ -5,6 +5,8 @@ from fastapi import HTTPException
 from sqlalchemy import select, func, update
 
 from app.services.recovery import recover_expired
+from app.services.eligibility import eligibility_reasons
+from app.core.model_registry import MODEL_REGISTRY
 from app.models import Job, Task, Worker
 from app.schemas.task import NextTaskResponse, TaskAssignment
 
@@ -42,10 +44,18 @@ def get_next_task(db, worker_id, settings):
             return NextTaskResponse(task=None)
         if not worker.model_id or not worker.model_revision:
             raise HTTPException(409, 'Register with a loaded model ID and revision first')
+        spec = MODEL_REGISTRY.get(worker.model_id)
+        supported = [kind for kind in worker.supported_tasks if spec is None or kind in spec.task_types]
+        if not supported:
+            return NextTaskResponse(task=None)
+        if eligibility_reasons(worker, worker.model_id, worker.model_revision,
+                               supported[0],
+                               now, settings.worker_timeout_seconds):
+            return NextTaskResponse(task=None)
         task = db.scalar(select(Task).join(Job, Task.job_id == Job.id).where(
             Task.status == 'QUEUED', Task.attempt_count < 3,
             Job.status.in_(['QUEUED', 'RUNNING']),
-            Job.task_type.in_(worker.supported_tasks),
+            Job.task_type.in_(supported),
             Job.model_id == worker.model_id, Job.model_revision == worker.model_revision,
         ).order_by(Task.created_at, Task.start_index, Task.id)
             .with_for_update(skip_locked=True, of=Task).limit(1))

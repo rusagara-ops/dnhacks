@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 class JobCreateRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     task_type: Literal['sentiment-classification', 'summarization', 'document-qa', 'information-extraction', 'coding-assistance']
+    model_id: str | None = Field(default=None, min_length=1, max_length=200)
     inputs: list[Annotated[str, Field(min_length=1, max_length=10000)]] = Field(min_length=1, max_length=1000)
     instruction: str | None = Field(default=None, min_length=1, max_length=1000)
     optimization: Literal['fastest'] = 'fastest'

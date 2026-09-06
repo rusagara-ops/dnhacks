@@ -6,6 +6,7 @@ from app.db.database import get_db
 from app.models import Job
 from app.schemas.job import JobCreateRequest, JobCreateResponse, JobResponse
 from app.services import job_service
+from app.core.model_registry import select_model
 from app.schemas.task import JobResultResponse
 from app.services.task_service import job_results
 
@@ -15,7 +16,8 @@ logger = logging.getLogger(__name__)
 
 @router.post('', status_code=201, response_model=JobCreateResponse)
 def create_job(payload: JobCreateRequest, response: Response, request: Request, db: Session = Depends(get_db)):
-    job = job_service.create_job(db, payload, request.app.state.settings.inference_model_id, request.app.state.settings.inference_model_revision)
+    model_id, revision = select_model(payload, request.app.state.settings)
+    job = job_service.create_job(db, payload, model_id, revision)
     response.headers['Location'] = f'/api/jobs/{job.id}'
     logger.info('Job created: %s (%s tasks)', job.id, job.total_tasks)
     return JobCreateResponse(job_id=job.id, total_inputs=job.total_inputs, total_tasks=job.total_tasks)
