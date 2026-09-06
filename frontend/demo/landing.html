@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stranded Compute — Schedule AI jobs onto idle machines</title>
+<style>
+  :root{
+    --ink:#20262e; --muted:#6b7686; --card:#fffdf9; --line:#e7e0d2;
+    --accent:#4f46e5; --job:#2f6df0; --result:#1f9d6b;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; color:var(--ink);
+    background:linear-gradient(180deg,#fbf6ee 0%, #f2ede3 100%);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    min-height:100dvh; padding:clamp(14px,3vw,40px);
+  }
+  .wrap{width:min(1160px,100%); text-align:center}
+  .eyebrow{display:inline-flex; align-items:center; gap:8px; font-family:var(--mono); font-size:12.5px; font-weight:600;
+    color:#0f7a3d; background:#eafaf0; border:1px solid #cdefd8; padding:5px 12px; border-radius:7px; margin-bottom:16px}
+  .eyebrow .led{width:8px;height:8px;border-radius:50%;background:#22c55e; animation:pulse 1.8s ease-out infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}70%{box-shadow:0 0 0 7px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+  h1{margin:0 0 10px; font-size:clamp(26px,4.2vw,44px); line-height:1.08; letter-spacing:-.02em; font-weight:800}
+  h1 .grad{background:linear-gradient(90deg,var(--accent),#0ea5e9);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{margin:0 auto; max-width:660px; color:#5c6675; font-size:clamp(15px,1.6vw,17px); line-height:1.5}
+  .sub code{font-family:var(--mono); font-size:.92em; background:#efe8db; padding:1px 6px; border-radius:5px; color:#4a4335}
+  .cta{display:inline-flex; align-items:center; gap:9px; margin-top:20px; padding:14px 26px; border-radius:12px;
+    font-size:16px; font-weight:700; color:#fff; text-decoration:none;
+    background:linear-gradient(90deg,#4f46e5,#2f6df0); box-shadow:0 10px 24px rgba(47,109,240,.32); transition:transform .12s ease, box-shadow .12s ease}
+  .cta:hover{transform:translateY(-2px); box-shadow:0 14px 30px rgba(47,109,240,.4)}
+  .cta .arrow{transition:transform .15s ease}
+  .cta:hover .arrow{transform:translateX(4px)}
+  .stage{width:100%; margin:16px auto 4px; border-radius:18px; overflow:hidden; border:1px solid #e7ddc9; box-shadow:0 20px 48px rgba(60,50,30,.14)}
+  svg{width:100%; height:auto; display:block}
+  .chips{display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:18px; font-family:var(--mono)}
+  .chip{background:var(--card); border:1px solid var(--line); border-radius:10px; padding:9px 13px; text-align:left; min-width:200px; box-shadow:0 3px 10px rgba(60,50,30,.06)}
+  .chip b{display:block; font-size:12.5px; color:#20262e}
+  .chip small{color:var(--muted); font-size:11.5px}
+
+  .spin{transform-box:fill-box; transform-origin:center; animation:spin 5s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .twinkle{animation:twinkle 2.4s ease-in-out infinite}
+  @keyframes twinkle{0%,100%{opacity:.2;transform:scale(.7)}50%{opacity:1;transform:scale(1)}}
+  .win{animation:win 5s ease-in-out infinite}
+  @keyframes win{0%,90%,100%{opacity:1}95%{opacity:.55}}
+  .dashflow{animation:flow 1.1s linear infinite}
+  @keyframes flow{to{stroke-dashoffset:-16}}
+  .drift{animation:drift 40s linear infinite}
+  @keyframes drift{from{transform:translateX(-30px)}to{transform:translateX(40px)}}
+  @media (prefers-reduced-motion: reduce){ .spin,.twinkle,.win,.dashflow,.drift,.eyebrow .led,.pkt{animation:none !important} .pkt{display:none} }
+</style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="eyebrow"><span class="led"></span> scheduler online — 3 nodes</div>
+    <h1>Schedule AI jobs onto <span class="grad">idle machines</span> on the network</h1>
+    <p class="sub">A coordinator matches each job to a free node by model and capacity, leases it, runs inference locally, and returns the result. Try it: <code>POST /api/jobs</code>.</p>
+    <a class="cta" href="index.html">Open the live demo <span class="arrow">→</span></a>
+
+    <div class="stage">
+      <svg viewBox="0 0 1200 640" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+           role="img" aria-label="An isometric neighborhood with a city skyline. One home sends a job to a coordinator hub which routes it to neighboring homes that compute and return results.">
+        <defs>
+          <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#cfe0f2"/><stop offset="55%" stop-color="#e7e6ea"/><stop offset="100%" stop-color="#f6ddc0"/></linearGradient>
+          <radialGradient id="sunG" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#fff2d6"/><stop offset="55%" stop-color="#ffe0ad" stop-opacity=".7"/><stop offset="100%" stop-color="#ffe0ad" stop-opacity="0"/></radialGradient>
+          <linearGradient id="cityFar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a7b0c9"/><stop offset="1" stop-color="#bfc4d6"/></linearGradient>
+          <linearGradient id="cityNear" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8a92b0"/><stop offset="1" stop-color="#a2a9c2"/></linearGradient>
+          <linearGradient id="grnd" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e7e0c8"/><stop offset="1" stop-color="#d6ceb0"/></linearGradient>
+          <!-- hand-drawn grain -->
+          <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="n"/><feColorMatrix in="n" type="saturate" values="0"/></filter>
+          <filter id="soft" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx="6" dy="9" stdDeviation="7" flood-color="#4a3d22" flood-opacity="0.18"/></filter>
+          <filter id="soft2" x="-60%" y="-60%" width="220%" height="220%"><feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#3a3020" flood-opacity="0.22"/></filter>
+        </defs>
+
+        <!-- sky + sun -->
+        <rect x="0" y="0" width="1200" height="640" fill="url(#sky)"/>
+        <circle cx="985" cy="150" r="160" fill="url(#sunG)"/>
+        <circle cx="985" cy="150" r="46" fill="#fff0cf"/>
+        <g fill="#fbf3e6" opacity="0.9" class="drift"><ellipse cx="250" cy="118" rx="58" ry="19"/><ellipse cx="300" cy="106" rx="44" ry="18"/><ellipse cx="206" cy="110" rx="38" ry="15"/></g>
+        <g fill="#fbf3e6" opacity="0.7" class="drift" style="animation-duration:55s"><ellipse cx="700" cy="86" rx="50" ry="16"/><ellipse cx="744" cy="78" rx="36" ry="15"/></g>
+
+        <!-- city skyline (muted, atmospheric) -->
+        <g fill="url(#cityFar)" opacity="0.92">
+          <rect x="70" y="250" width="52" height="180" rx="2"/><rect x="134" y="212" width="40" height="218" rx="2"/><rect x="188" y="278" width="58" height="152"/><rect x="1010" y="260" width="46" height="170" rx="2"/><rect x="1068" y="222" width="38" height="208" rx="2"/><rect x="1118" y="278" width="54" height="152"/>
+        </g>
+        <g fill="url(#cityNear)">
+          <rect x="300" y="256" width="66" height="176" rx="2"/><rect x="380" y="208" width="50" height="224" rx="3"/><rect x="446" y="290" width="60" height="142"/><rect x="720" y="272" width="58" height="160" rx="2"/><rect x="788" y="228" width="46" height="204" rx="2"/><rect x="850" y="292" width="66" height="140"/><rect x="574" y="204" width="76" height="228" rx="3"/>
+        </g>
+        <g fill="#f4e6c8">
+          <g class="win"><rect x="392" y="224" width="7" height="9"/><rect x="406" y="224" width="7" height="9"/><rect x="392" y="242" width="7" height="9"/></g>
+          <g class="win" style="animation-delay:1s"><rect x="588" y="222" width="8" height="10"/><rect x="608" y="222" width="8" height="10"/><rect x="628" y="222" width="8" height="10"/><rect x="588" y="244" width="8" height="10"/></g>
+          <g class="win" style="animation-delay:.5s"><rect x="800" y="246" width="7" height="9"/><rect x="814" y="246" width="7" height="9"/></g>
+        </g>
+
+        <!-- ground + faint isometric grid -->
+        <path d="M0 452 Q600 414 1200 452 L1200 640 L0 640 Z" fill="url(#grnd)"/>
+        <g stroke="#cbc19f" stroke-width="1" opacity="0.5">
+          <path d="M120 640 L360 470"/><path d="M360 640 L600 470"/><path d="M600 640 L840 470"/><path d="M840 640 L1080 470"/>
+          <path d="M1080 640 L840 470"/><path d="M840 640 L600 470"/><path d="M600 640 L360 470"/><path d="M360 640 L120 470"/>
+        </g>
+
+        <!-- ===== routing arcs ===== -->
+        <g fill="none" stroke="#b09a7a" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="2 12" opacity="0.85">
+          <path id="lnA" class="dashflow" d="M 250 440 Q 410 300 588 258"/>
+          <path id="lnB" class="dashflow" d="M 612 258 Q 760 300 918 430"/>
+          <path id="lnC" class="dashflow" d="M 588 262 Q 470 340 392 452"/>
+        </g>
+
+        <!-- ===== Coordinator hub (elevated node) ===== -->
+        <ellipse cx="600" cy="300" rx="66" ry="16" fill="#4a3d22" opacity="0.12"/>
+        <g filter="url(#soft)"><rect x="536" y="196" width="128" height="86" rx="16" fill="#fffdf7" stroke="#e6dcc6" stroke-width="1.5"/></g>
+        <rect x="536" y="196" width="128" height="86" rx="16" fill="none" stroke="#4f46e5" stroke-opacity=".16" stroke-width="2"/>
+        <circle cx="600" cy="236" r="28" fill="#eef1ff" stroke="#dde1fb"/>
+        <g class="spin" style="animation-duration:10s"><path d="M600 218 v36 M582 236 h36 M588 224 l24 24 M612 224 l-24 24" stroke="#4f46e5" stroke-width="3" stroke-linecap="round" fill="none"/></g>
+        <circle cx="600" cy="236" r="38" fill="none" stroke="#4f46e5" stroke-opacity=".3"><animate attributeName="r" values="34;60" dur="3s" repeatCount="indefinite"/><animate attributeName="stroke-opacity" values=".32;0" dur="3s" repeatCount="indefinite"/></circle>
+        <text x="600" y="182" text-anchor="middle" font-size="14" font-weight="800" fill="#20262e">Coordinator</text>
+
+        <!-- ================= HOMES (2.5D with side faces) ================= -->
+
+        <!-- YOU (front-left, bigger) -->
+        <ellipse cx="252" cy="490" rx="98" ry="18" fill="#4a3d22" opacity="0.14"/>
+        <g filter="url(#soft)">
+          <!-- side face -->
+          <path d="M312 388 L340 372 L340 470 L312 486 Z" fill="#d8c19a"/>
+          <!-- roof side -->
+          <path d="M252 336 L280 320 L340 372 L312 388 Z" fill="#b4613e"/>
+          <!-- roof front -->
+          <path d="M170 372 L252 336 L312 388 Z" fill="#cf7a54"/>
+          <!-- front wall -->
+          <rect x="170" y="386" width="142" height="100" rx="3" fill="#f3e6cd"/>
+        </g>
+        <rect x="188" y="404" width="34" height="34" rx="3" fill="#ffdd93" class="win"/><path d="M205 404v34M188 421h34" stroke="#e8c477" stroke-width="2"/>
+        <rect x="240" y="430" width="40" height="56" rx="3" fill="#ffdd93" class="win" style="animation-delay:.4s"/><path d="M260 430v56M240 452h40" stroke="#e8c477" stroke-width="2"/>
+        <rect x="286" y="352" width="12" height="24" rx="2" fill="#a86a44"/>
+        <text x="250" y="512" text-anchor="middle" font-size="13" font-weight="800" fill="#20262e">You</text>
+        <text x="250" y="528" text-anchor="middle" font-size="10.5" fill="#6b7686">POST /api/jobs</text>
+
+        <!-- NEIGHBOR A (right) -->
+        <ellipse cx="918" cy="486" rx="92" ry="17" fill="#4a3d22" opacity="0.14"/>
+        <g filter="url(#soft)">
+          <path d="M968 384 L992 370 L992 466 L968 480 Z" fill="#8aa0b8"/>
+          <path d="M918 336 L942 322 L992 370 L968 384 Z" fill="#3f7f92"/>
+          <path d="M846 370 L918 336 L968 384 Z" fill="#4f9eb0"/>
+          <rect x="846" y="384" width="122" height="96" rx="3" fill="#eef0ec"/>
+        </g>
+        <rect x="862" y="400" width="30" height="30" rx="3" fill="#bfe0ff" class="win" style="animation-delay:.8s"/><path d="M877 400v30M862 415h30" stroke="#a8cff0" stroke-width="2"/>
+        <!-- glowing screen + gear (compute) -->
+        <rect x="906" y="424" width="46" height="30" rx="3" fill="#12321f"/>
+        <g class="spin" style="transform-origin:929px 439px"><circle cx="929" cy="439" r="6" fill="none" stroke="#34d399" stroke-width="2.4"/><path d="M929 429v4M929 445v4M919 439h4M935 439h4" stroke="#34d399" stroke-width="2.4" stroke-linecap="round"/></g>
+        <text x="915" y="504" text-anchor="middle" font-size="12" font-weight="700" fill="#20262e">Neighbor</text>
+        <text x="915" y="519" text-anchor="middle" font-size="10" fill="#6b7686">gemma3:12b</text>
+
+        <!-- NEIGHBOR B (mid, smaller/behind for depth) -->
+        <ellipse cx="470" cy="470" rx="66" ry="13" fill="#4a3d22" opacity="0.12"/>
+        <g filter="url(#soft)">
+          <path d="M508 402 L526 391 L526 462 L508 473 Z" fill="#c9a86a"/>
+          <path d="M470 366 L488 355 L526 391 L508 402 Z" fill="#c58f3d"/>
+          <path d="M418 391 L470 366 L508 402 Z" fill="#e0a94e"/>
+          <rect x="418" y="402" width="90" height="71" rx="3" fill="#f3e6cd"/>
+        </g>
+        <rect x="430" y="416" width="24" height="24" rx="3" fill="#ffdd93" class="win" style="animation-delay:1.2s"/>
+        <rect x="468" y="428" width="34" height="22" rx="3" fill="#12321f"/>
+        <g class="spin" style="transform-origin:485px 439px;animation-duration:6s"><circle cx="485" cy="439" r="5" fill="none" stroke="#34d399" stroke-width="2.2"/></g>
+        <text x="463" y="496" text-anchor="middle" font-size="11" font-weight="700" fill="#20262e">Neighbor</text>
+
+        <!-- little trees -->
+        <g><rect x="360" y="450" width="7" height="24" fill="#8a6a45"/><circle cx="363" cy="442" r="17" fill="#7fae78"/><circle cx="374" cy="448" r="11" fill="#6fa06a"/></g>
+        <g><rect x="1024" y="452" width="7" height="22" fill="#8a6a45"/><circle cx="1027" cy="444" r="15" fill="#7fae78"/><circle cx="1016" cy="450" r="10" fill="#6fa06a"/></g>
+
+        <!-- twinkles -->
+        <g fill="#34d399">
+          <path class="twinkle" d="M958 416 l1.6 4 4 1.6 -4 1.6 -1.6 4 -1.6 -4 -4 -1.6 4 -1.6 Z"/>
+          <path class="twinkle" style="animation-delay:.7s" d="M512 420 l1.4 3.4 3.4 1.4 -3.4 1.4 -1.4 3.4 -1.4 -3.4 -3.4 -1.4 3.4 -1.4 Z"/>
+        </g>
+
+        <!-- ===== grain overlay (tactile, anti-flat) ===== -->
+        <rect x="0" y="0" width="1200" height="640" filter="url(#grain)" opacity="0.10" style="mix-blend-mode:multiply"/>
+
+        <!-- ===== flying job / result docs (over grain, stay crisp) ===== -->
+        <!-- job: You -> hub -->
+        <g class="pkt"><g filter="url(#soft2)"><rect x="-12" y="-15" width="24" height="30" rx="3" fill="#fffdf7" stroke="#bcd0f7"/></g><rect x="-7" y="-10" width="14" height="3" rx="1.5" fill="#2f6df0"/><rect x="-7" y="-3" width="14" height="2" fill="#cbd2df"/><rect x="-7" y="3" width="14" height="2" fill="#cbd2df"/><rect x="-7" y="9" width="9" height="2" fill="#cbd2df"/>
+          <animateMotion dur="2.6s" begin="0s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="linear"><mpath xlink:href="#lnA"/></animateMotion></g>
+        <!-- hub -> neighbor A -->
+        <g class="pkt"><g filter="url(#soft2)"><rect x="-12" y="-15" width="24" height="30" rx="3" fill="#fffdf7" stroke="#bcd0f7"/></g><rect x="-7" y="-10" width="14" height="3" rx="1.5" fill="#2f6df0"/><rect x="-7" y="-3" width="14" height="2" fill="#cbd2df"/><rect x="-7" y="3" width="14" height="2" fill="#cbd2df"/>
+          <animateMotion dur="2.6s" begin="0.9s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="linear"><mpath xlink:href="#lnB"/></animateMotion></g>
+        <!-- hub -> neighbor B -->
+        <g class="pkt"><g filter="url(#soft2)"><rect x="-12" y="-15" width="24" height="30" rx="3" fill="#fffdf7" stroke="#bcd0f7"/></g><rect x="-7" y="-10" width="14" height="3" rx="1.5" fill="#2f6df0"/><rect x="-7" y="-3" width="14" height="2" fill="#cbd2df"/>
+          <animateMotion dur="2.6s" begin="1.3s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="linear"><mpath xlink:href="#lnC"/></animateMotion></g>
+        <!-- result: neighbor A -> hub -> You -->
+        <g class="pkt"><g filter="url(#soft2)"><rect x="-12" y="-15" width="24" height="30" rx="3" fill="#fffdf7" stroke="#bfe8d5"/></g><circle cx="0" cy="-7" r="5.5" fill="#d3f6e5"/><path d="M-3 -7 l2 2 4 -4" stroke="#1f9d6b" stroke-width="2" fill="none" stroke-linecap="round"/><rect x="-7" y="3" width="14" height="2" fill="#cbd2df"/><rect x="-7" y="9" width="10" height="2" fill="#cbd2df"/>
+          <animateMotion dur="2.6s" begin="1.8s" repeatCount="indefinite" keyPoints="1;0" keyTimes="0;1" calcMode="linear"><mpath xlink:href="#lnB"/></animateMotion></g>
+        <g class="pkt"><g filter="url(#soft2)"><rect x="-12" y="-15" width="24" height="30" rx="3" fill="#fffdf7" stroke="#bfe8d5"/></g><circle cx="0" cy="-7" r="5.5" fill="#d3f6e5"/><path d="M-3 -7 l2 2 4 -4" stroke="#1f9d6b" stroke-width="2" fill="none" stroke-linecap="round"/><rect x="-7" y="3" width="14" height="2" fill="#cbd2df"/>
+          <animateMotion dur="2.6s" begin="2.7s" repeatCount="indefinite" keyPoints="1;0" keyTimes="0;1" calcMode="linear"><mpath xlink:href="#lnA"/></animateMotion></g>
+      </svg>
+    </div>
+
+    <div class="chips">
+      <div class="chip"><b>$ join --as provider</b><small>Any idle laptop joins as a node.</small></div>
+      <div class="chip"><b>match(model, caps, ram)</b><small>Scheduler routes to a free, capable machine.</small></div>
+      <div class="chip"><b>lease · meter · settle</b><small>Every job is authorized and credited.</small></div>
+    </div>
+  </main>
+</body>
+</html>
