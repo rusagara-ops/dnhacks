@@ -29,11 +29,10 @@
         <div><p class="eyebrow">COMPUTE DIRECTORY</p><h2 id="explorer-title">Choose where work runs</h2></div>
         <span id="workers-match">Connect to see workers</span>
       </div>
-      <p class="muted">Select a compatible machine or let the coordinator assign the best available worker. No location sharing is required.</p>
+      <p class="muted">Select the active machine that should run this job. No location sharing is required.</p>
       <div id="worker-picker" class="worker-picker"><p class="empty">Connect to see available compute.</p></div>
       <div class="worker-selection">
-        <button id="automatic-worker" class="subtle" aria-pressed="true">Use automatic assignment</button>
-        <p id="selected-worker" role="status">Automatic: any online worker with the matching model can claim your job.</p>
+        <p id="selected-worker" role="status">Choose an active machine above before submitting.</p>
       </div>
     </section>
 
@@ -64,7 +63,7 @@
         <option value="coding-assistance">Coding assistance</option>
       </select>
       <label for="model" class="model-label">Choose a model</label>
-      <select id="model" aria-describedby="model-help" disabled><option value="">Coordinator default</option></select>
+      <select id="model" aria-describedby="model-help" disabled><option value="">Select a model</option></select>
       <p id="model-help" class="muted" role="status">Connect to see available models.</p>
       <p id="mode-help" class="muted">One coherent summary of your entire document.</p>
     </section>

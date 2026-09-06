@@ -35,7 +35,6 @@ $('mode').onchange = () => {
   renderWorkerPicker(latestWorkers);
 };
 $('model').onchange = () => {
-  selectedWorkerId = '';
   renderModels();
   renderWorkerPicker(latestWorkers);
 };
@@ -107,7 +106,7 @@ function renderModels() {
       if (worker.status !== 'OFFLINE') choices.get(model.model_id).push(worker.name);
     }
   }
-  select.replaceChildren(el('option', 'Coordinator default'));
+  select.replaceChildren(el('option', 'Select a model'));
   select.firstChild.value = '';
   for (const [id, names] of choices) {
     const option = el('option', `${id} — ${names.length ? [...new Set(names)].join(', ') : 'No worker online'}`);
@@ -119,12 +118,11 @@ function renderModels() {
   }
   select.value = previous;
   select.disabled = !connected;
-  const available = !previous || !!choices.get(previous)?.length;
+  const available = !!previous && !!choices.get(previous)?.length;
   $('model-help').textContent = !connected ? 'Connect to see available models.' : !available
-    ? 'The selected model is unavailable. Choose another model or use automatic worker assignment.'
-    : previous ? 'Your job will use this exact model on a compatible worker.'
-    : 'Uses the coordinator’s configured default model.';
-  $('submit').disabled = !connected || submitting || !available;
+    ? 'Choose a model advertised by the selected active machine.'
+    : 'Your job will use this exact model on the selected machine.';
+  $('submit').disabled = !connected || submitting || !available || !selectedWorkerId;
 }
 function renderWorkerPicker(workers) {
   const list = $('worker-picker');
@@ -159,15 +157,9 @@ function renderWorkerPicker(workers) {
   }
   if (!relevant.length) list.append(el('p', connected ? 'No online worker supports this task and model.' : 'Connect to see available compute.', 'empty'));
   $('selected-worker').textContent = selectedWorkerId
-    ? `Selected: ${relevant.find(w => w.id === selectedWorkerId)?.name || selectedWorkerId.slice(0, 8)}. This job waits for this machine if it disconnects.`
-    : 'Automatic: any online worker with the matching model can claim your job.';
-  $('automatic-worker').setAttribute('aria-pressed', String(!selectedWorkerId));
+    ? `Selected: ${relevant.find(w => w.id === selectedWorkerId)?.name || selectedWorkerId.slice(0, 8)}. This job runs on this machine.`
+    : 'Choose an active machine above before submitting.';
 }
-$('automatic-worker').onclick = () => {
-  selectedWorkerId = '';
-  renderModels();
-  renderWorkerPicker(latestWorkers);
-};
 function renderWorkers(workers, activity) {
   const candidates = activeWorkers(workers).filter(w => workerModels(w).some(m => m.supported_tasks.some(t => t in modes)));
   $('workers').replaceChildren();
@@ -439,7 +431,7 @@ $('submit').onclick = async () => {
   }
   submitting = true; $('submit').disabled = true; $('error').textContent = '';
   try {
-    const job = await api('/jobs', { task_type: mode, ...($('model').value ? {model_id: $('model').value} : {}), inputs: [document], optimization: 'fastest', ...(selectedWorkerId ? {target_worker_id: selectedWorkerId} : {}), ...(instruction ? {instruction} : {}) });
+    const job = await api('/jobs', { task_type: mode, model_id: $('model').value, inputs: [document], optimization: 'fastest', target_worker_id: selectedWorkerId, ...(instruction ? {instruction} : {}) });
     jobId = job.job_id; jobMode = mode;
     $('result-title').textContent = {summarization: 'Document summary', 'document-qa': 'Answer', 'information-extraction': 'Extracted information', 'coding-assistance': 'Code assistance'}[mode];
     await refresh();

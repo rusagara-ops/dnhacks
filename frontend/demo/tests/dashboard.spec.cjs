@@ -61,16 +61,17 @@ test('shows worker selection and coordinator task distribution without a map', a
   expect(errors).toEqual([]);
 });
 
-test('keeps explicit and automatic worker assignment working', async ({page}) => {
+test('requires an explicit model and worker before submission', async ({page}) => {
   const {submissions, errors} = await setup(page);
+  await expect(page.locator('#submit')).toBeDisabled();
+  await page.locator('#model').selectOption('gemma3:12b');
+  await expect(page.locator('#submit')).toBeDisabled();
   await page.getByRole('button', {name: 'Use this worker', exact: true}).first().click();
   await expect(page.locator('#selected-worker')).toContainText('Abel-Mac');
+  await expect(page.locator('#submit')).toBeEnabled();
   await page.locator('#submit').click();
   await expect.poll(() => submissions.length).toBe(1);
   expect(submissions[0].target_worker_id).toBe('abel');
-  await page.locator('#automatic-worker').click();
-  await page.locator('#submit').click();
-  await expect.poll(() => submissions.length).toBe(2);
-  expect(submissions[1]).not.toHaveProperty('target_worker_id');
+  expect(submissions[0].model_id).toBe('gemma3:12b');
   expect(errors).toEqual([]);
 });
