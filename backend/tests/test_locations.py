@@ -204,3 +204,46 @@ def test_http_discovery_selection_and_persisted_results(factory):
         assert result['status'] == 'COMPLETED'
         assert result['tasks'][0]['inference_metrics'] == {
             'prompt_tokens': None, 'output_tokens': 10, 'generation_duration_ms': 1000, 'tokens_per_second': 10}
+
+
+def test_worker_map_edit_auth_validation_and_registration_preservation(factory):
+    app = create_app(Settings(_env_file=None, database_url=None, api_token='test'))
+    def session():
+        with factory() as db: yield db
+    app.dependency_overrides[get_db] = session
+    payload = dict(device_id=str(uuid4()), name='Owner GPU', hostname='owner', cpu='test', cpu_cores=1,
+                   ram_gb=8, supported_tasks=['summarization'])
+    with TestClient(app) as client:
+        assert client.post(f'/api/workers/{uuid4()}/location', json={'location': None}).status_code == 401
+        assert client.post('/api/workers/locations/search', json={'latitude': 0, 'longitude': 0}).status_code == 401
+        client.headers['Authorization'] = 'Bearer test'
+        worker_id = client.post('/api/workers/register', json=payload).json()['worker_id']
+        original = client.get('/api/workers').json()[0]
+        site = {'site': 'Campus', 'latitude': 0, 'longitude': 0}
+        assert client.post(f'/api/workers/{worker_id}/location', json={'location': site | {'latitude': 91}}).status_code == 422
+        assert client.post(f'/api/workers/{uuid4()}/location', json={'location': site}).status_code == 404
+        updated = client.post(f'/api/workers/{worker_id}/location', json={'location': site})
+        assert updated.status_code == 200, updated.text
+        assert updated.json()['location']['site'] == 'Campus'
+        assert updated.json()['last_heartbeat'] == original['last_heartbeat']
+        assert updated.json()['active_tasks'] == original['active_tasks']
+        # The ordinary startup omits location and must not erase the map edit.
+        assert client.post('/api/workers/register', json=payload).json()['worker_id'] == worker_id
+        assert client.get('/api/workers').json()[0]['location']['site'] == 'Campus'
+        response = client.post('/api/workers/locations/search', json={'latitude': 0, 'longitude': 0})
+        assert response.status_code == 200
+        assert response.json()['distance_reference'] == 'request'
+        assert response.json()['items'][0]['distance_km'] == 0
+        assert client.post('/api/workers/locations/search', json={'latitude': 0}).status_code == 422
+        assert client.post('/api/workers/locations/search', json={'latitude': 0, 'longitude': 'NaN'}).status_code == 422
+        client.post(f'/api/workers/{worker_id}/location', json={'location': None})
+        assert client.get('/api/workers').json()[0]['location'] is None
+
+
+def test_gpu_allocation_is_discoverable_when_gpu_name_is_unknown(factory):
+    worker_id = seed(factory)[0]
+    with factory.begin() as db:
+        db.get(Worker, worker_id).gpu_model_memory_gb = 4
+    with factory() as db:
+        result = list_locations(db, SETTINGS, gpu_only=True)
+        assert result.items[0].worker.id == worker_id

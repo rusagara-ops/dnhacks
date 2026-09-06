@@ -17,6 +17,10 @@ def describe_worker(worker, now, timeout):
 
 def register_worker(db, payload: WorkerRegisterRequest):
     values = payload.model_dump()
+    # Keep a location saved through the map when an older worker restarts.
+    # Explicit null still clears it; explicit startup coordinates still update it.
+    if 'location' not in payload.model_fields_set:
+        values.pop('location', None)
     if payload.device_id is None:
         # Older clients have no installation ID. Serialize exact legacy-identity
         # retries and reuse their latest row without merging distinct modern devices.
@@ -46,6 +50,18 @@ def register_worker(db, payload: WorkerRegisterRequest):
         index_elements=[Worker.device_id], set_=updates).returning(Worker.id))
     db.commit()
     return db.get(Worker, worker_id)
+
+
+def update_location(db, worker_id, location, timeout):
+    from fastapi import HTTPException
+    with db.begin():
+        worker = db.scalar(select(Worker).where(Worker.id == worker_id).with_for_update())
+        if worker is None:
+            raise HTTPException(404, 'Worker not found')
+        worker.location = location.model_dump() if location is not None else None
+        db.flush()
+        now = db.scalar(select(func.clock_timestamp()))
+        return describe_worker(worker, now, timeout)
 
 
 def list_workers(db, timeout, limit, offset, include_history=False):
