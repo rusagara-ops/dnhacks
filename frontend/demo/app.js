@@ -3,6 +3,54 @@ let token = '', jobId = null, connected = false, polling = false, jobMode = 'sum
 let connectionGeneration = 0, latestResult = null, latestWorkers = [], submitting = false;
 let selectedWorkerId = '';
 let selectedActivityTaskId = '';
+let documents = [], parsing = false, parseGeneration = 0, uncertainSubmission = false;
+const jobFiles = new Map();
+function fileMode() { return document.querySelector('input[name="source-kind"]:checked').value === 'files'; }
+function saveNames(id, names) {
+  jobFiles.set(id, names);
+  try {
+    const stored = JSON.parse(sessionStorage.getItem('documentJobNames') || '{}');
+    stored[id] = names;
+    sessionStorage.setItem('documentJobNames', JSON.stringify(Object.fromEntries(Object.entries(stored).slice(-50))));
+  } catch { /* Names remain available until refresh if storage is unavailable. */ }
+}
+function namesFor(id) {
+  if (jobFiles.has(id)) return jobFiles.get(id);
+  try { const names = JSON.parse(sessionStorage.getItem('documentJobNames') || '{}')[id]; return Array.isArray(names) ? names : []; } catch { return []; }
+}
+function renderDocuments() {
+  $('document-list').replaceChildren();
+  for (const [index, entry] of documents.entries()) {
+    const card = el('article', undefined, 'upload-document');
+    card.append(el('strong', entry.name), el('p', entry.error || (entry.text === null ? 'Parsing…' : `Ready · ${Documents.bytes(entry.text).toLocaleString()} UTF-8 bytes`), entry.error ? 'failure' : 'muted'));
+    if (entry.text !== null && !entry.error) {
+      const preview = el('details'); preview.append(el('summary', 'Preview extracted text'), el('pre', entry.text)); card.append(preview);
+    }
+    const remove = el('button', 'Remove', 'subtle'); remove.type = 'button'; remove.disabled = parsing || submitting;
+    remove.onclick = () => { documents.splice(index,1); renderDocuments(); }; card.append(remove); $('document-list').append(card);
+  }
+  $('upload-status').textContent = `${documents.length} documents · ${documents.filter(entry => entry.text !== null && !entry.error).length} ready${parsing ? ' · Parsing…' : ''}`;
+  $('document-files').disabled = parsing || submitting; $('clear-documents').disabled = parsing || submitting;
+  renderModels();
+}
+document.querySelectorAll('input[name="source-kind"]').forEach(input => input.onchange = () => {
+  $('upload-panel').hidden = !fileMode(); $('paste-panel').hidden = fileMode(); $('sample').hidden = fileMode(); updateMode(); renderDocuments();
+});
+$('clear-documents').onclick = () => { documents = []; $('document-files').value = ''; renderDocuments(); };
+$('document-files').onchange = async event => {
+  const files = Array.from(event.target.files); event.target.value = '';
+  if (documents.length + files.length > Documents.MAX_FILES) { $('error').textContent = 'Choose at most 100 documents per batch.'; return; }
+  parsing = true; const current = ++parseGeneration; $('error').textContent = '';
+  const added = files.map(file => ({name:file.name,text:null,error:null})); documents.push(...added); renderDocuments();
+  for (let index=0; index<files.length; index++) {
+    try { added[index].text = await Documents.parse(files[index]); }
+    catch (error) { added[index].error = error.message; }
+    if (current !== parseGeneration) return;
+    renderDocuments();
+  }
+  parsing = false; renderDocuments();
+};
+
 
 const example = `The city library is launching a three-month pilot to make its services easier to access. Starting in October, weekday closing time will move from 6 p.m. to 9 p.m. The change follows requests from residents who work during the day and need a quiet place to study in the evening.
 
@@ -20,7 +68,7 @@ function updateMode() {
   const mode = $('mode').value;
   const coding = mode === 'coding-assistance';
   $('submit').textContent = modes[mode][0];
-  $('mode-help').textContent = modes[mode][1];
+  $('mode-help').textContent = fileMode() ? 'Each uploaded document is processed independently; results stay associated with its filename.' : modes[mode][1];
   $('source-title').textContent = coding ? 'Code snippet' : 'Source document';
   $('source-label').textContent = coding ? 'Paste code to explain or debug.' : 'Paste the entire English document, including all its paragraphs.';
   $('inputs').placeholder = coding ? 'Paste your code here…' : 'Paste an English document here…';
@@ -55,7 +103,7 @@ function el(tag, text, cls) {
 }
 async function api(path, body) {
   const response = await fetch('/api' + path, {
-    method: body === undefined ? 'GET' : 'POST',
+    method: body === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(15000),
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body)
   });
@@ -122,7 +170,7 @@ function renderModels() {
   $('model-help').textContent = !connected ? 'Connect to see available models.' : !available
     ? 'Choose a model advertised by the selected active machine.'
     : 'Your job will use this exact model on the selected machine.';
-  $('submit').disabled = !connected || submitting || !available || !selectedWorkerId;
+  $('submit').disabled = !connected || submitting || !available || !selectedWorkerId || uncertainSubmission || (fileMode() && (parsing || !documents.length || documents.some(entry => entry.error || entry.text === null)));
 }
 function renderWorkerPicker(workers) {
   const list = $('worker-picker');
@@ -203,6 +251,7 @@ function renderResults(data) {
   for (const task of data.tasks) {
     const card = el('article', undefined, 'result');
     const result = data.results.find(r => r.index === task.input_start_index);
+    card.append(el('h3', namesFor(jobId)[task.input_start_index] || `Document ${task.input_start_index + 1}`));
     card.append(el('small', `DOCUMENT ${task.input_start_index + 1} · ${task.status}`));
     if (result && 'names' in result) {
       for (const [key, label] of Object.entries({names: 'Names', dates: 'Dates', amounts: 'Amounts', action_items: 'Action items'})) {
@@ -398,7 +447,7 @@ $('show-token').onclick = () => {
   const show = $('token').type === 'password'; $('token').type = show ? 'text' : 'password'; $('show-token').textContent = show ? 'Hide token' : 'Show token';
 };
 $('disconnect').onclick = () => {
-  latestResult = null; $('download-result').disabled = true; connectionGeneration++; connected = false; token = ''; rememberToken('');
+  latestResult = null; $('download-result').disabled = true; connectionGeneration++; uncertainSubmission = false; $('retry-submission').hidden = true; connected = false; token = ''; rememberToken('');
   latestWorkers = []; selectedWorkerId = ''; $('model').value = ''; renderModels(); renderWorkerPicker([]);
   $('token').value = ''; $('token').type = 'password'; $('show-token').textContent = 'Show token';
   $('submit').disabled = true; $('disconnect').hidden = true; $('connection').textContent = 'Disconnected';
@@ -422,25 +471,39 @@ try {
   if (saved) { $('token').value = saved; $('remember-token').checked = true; $('connect').click(); }
 } catch { /* Storage is optional. */ }
 $('submit').onclick = async () => {
-  const mode = $('mode').value; const instruction = ['document-qa', 'coding-assistance'].includes(mode) ? $('instruction').value.trim() : '';
-  const document = $('inputs').value.trim();
+  const mode = $('mode').value;
+  const instruction = ['document-qa', 'coding-assistance'].includes(mode) ? $('instruction').value.trim() : '';
+  if (submitting || parsing || uncertainSubmission || !connected || !selectedWorkerId || !$('model').value) return;
+  const document = $('inputs').value;
+  let inputs;
+  try { inputs = Documents.validate(fileMode() ? documents : [{name:'Pasted document',text:document}], instruction); }
+  catch (error) { $('error').textContent = error.message; return; }
+  const names = fileMode() ? documents.map(entry => entry.name) : ['Pasted document'];
+  const generation = connectionGeneration;
   if (mode === 'document-qa' && !instruction) { $('error').textContent = 'Enter a question about the document.'; return; }
-  if (!document) { $('error').textContent = 'Add a document first.'; return; }
-  if (new TextEncoder().encode(document).length > 6000 || new TextEncoder().encode(document + instruction).length > 6500) {
-    $('error').textContent = 'Keep the source under 6,000 UTF-8 bytes and source plus request under 6,500. Input will not be silently truncated.'; return;
-  }
-  submitting = true; $('submit').disabled = true; $('error').textContent = '';
+  submitting = true; $('submit').disabled = true; renderDocuments();
+  $('error').textContent = '';
+  let accepted = false;
   try {
-    const job = await api('/jobs', { task_type: mode, model_id: $('model').value, inputs: [document], optimization: 'fastest', target_worker_id: selectedWorkerId, ...(instruction ? {instruction} : {}) });
-    jobId = job.job_id; jobMode = mode;
+    const job = await api('/jobs', { task_type: mode, model_id: $('model').value, inputs, optimization: 'fastest', target_worker_id: selectedWorkerId, ...(instruction ? {instruction} : {}) });
+    accepted = true; saveNames(job.job_id, names);
+    if (generation !== connectionGeneration || !connected) return;
+    jobId = job.job_id;
+    jobMode = mode;
     $('result-title').textContent = {summarization: 'Document summary', 'document-qa': 'Answer', 'information-extraction': 'Extracted information', 'coding-assistance': 'Code assistance'}[mode];
     await refresh();
-  } catch (error) { $('error').textContent = error.message; }
-  finally { submitting = false; renderModels(); }
+  } catch (error) {
+    if (generation !== connectionGeneration) return;
+    uncertainSubmission = !accepted && (!error.status || error.status >= 500);
+    $('error').textContent = uncertainSubmission ? 'Submission could not be confirmed. Check recent task activity before trying again; a job may already exist.' : error.message;
+    $('retry-submission').hidden = !uncertainSubmission;
+  }
+  finally { submitting = false; renderDocuments(); }
 };
 setInterval(refresh, 2000);
 $('download-result').onclick = () => {
   if (!latestResult) return;
-  const url = URL.createObjectURL(new Blob([JSON.stringify(latestResult, null, 2)], {type: 'application/json'}));
+  const url = URL.createObjectURL(new Blob([JSON.stringify({...latestResult, source_files: namesFor(latestResult.job_id).map((name,index) => ({index,name}))}, null, 2)], {type: 'application/json'}));
   const link = document.createElement('a'); link.href = url; link.download = `job-${latestResult.job_id}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
+$('retry-submission').onclick = () => { uncertainSubmission = false; $('retry-submission').hidden = true; $('error').textContent = ''; renderModels(); };

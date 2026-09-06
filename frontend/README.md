@@ -62,3 +62,7 @@ Select a job to see the work distribution matrix: completed tasks / total job ta
 To create a ten-task document job, enable **Split into independent sections** and place `---` on its own line between ten sections. This uses the existing batch API; no backend deployment is needed. Each section has a 6,000-byte limit and produces its own independent result. This does not synthesize a final combined summary. A normal whole-document submission remains one task. Compatible workers dynamically pull tasks; an 8/2 allocation is observable, not guaranteed.
 
 The matrix measures accepted completions rather than all execution attempts. The current backend does not retain prior worker attribution in its results response after reassignment, so previous failed execution cannot be assigned to a computer. Current compatibility is not a historical scheduling audit. Worker results and attribution are also available in the existing JSON download.
+
+## Document uploads
+
+In the demo, select Upload documents to add TXT or text-based PDF files. Text is extracted in the browser and previewed before submission. Each whole document becomes one task in a single job; the current worker selection applies to the batch. Results and JSON downloads retain filenames. Reopen results from Recent task activity after a refresh. Limits: 100 files, 10 MiB per file, 6,000 UTF-8 bytes of extracted text per document (6,500 including instructions). Scanned PDFs require OCR and are rejected; no text is silently truncated.
