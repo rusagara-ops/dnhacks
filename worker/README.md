@@ -103,3 +103,12 @@ Omitting `--models` preserves the Gemma-only worker. Concurrent generation share
 Registered models use `keep_alive=-1` on warmup and generation so idle expiration cannot stall GPU eligibility. They retain memory until explicitly unloaded or Ollama is stopped. Restart the worker after restarting Ollama.
 
 On macOS, registration uses an application-specific UUID derived from the machine's platform UUID, so copying the repository does not create another machine identity. The raw hardware UUID is never transmitted. The previous cached installation UUID is retained as a migration alias: registration updates that existing database row rather than inserting another. A per-user machine lock prevents two updated worker copies from running concurrently. `WORKER_STATE_DIR` explicitly opts into isolated identities for tests; non-Mac hosts retain the cached installation ID fallback.
+# Controlled sharing enrollment
+
+For an individually owned worker, print its enrollment ID with
+`worker/.venv/bin/python worker/run.py --show-device-id`, issue a worker credential
+under your account in `/demo/sharing.html`, and launch with `--scoped-credential`.
+Put that credential in `API_TOKEN` privately. New owned workers start paused until
+their provider enables sharing. Existing shared-token demo launch commands remain
+supported. See [the rollout and trust guide](../docs/CONTROLLED_COMPUTE.md) before
+switching a coordinator to controlled mode.

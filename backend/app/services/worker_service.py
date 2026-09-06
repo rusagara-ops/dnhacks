@@ -16,14 +16,20 @@ def describe_worker(worker, now, timeout):
     return WorkerResponse(**fields, status=status)
 
 
-def register_worker(db, payload: WorkerRegisterRequest):
+def register_worker(db, payload: WorkerRegisterRequest, owner_account_id=None):
     values = payload.model_dump()
+    if owner_account_id is not None:
+        values['owner_account_id'] = owner_account_id
     if payload.device_id is not None:
         db.execute(select(func.pg_advisory_xact_lock(func.hashtext(str(payload.device_id)))))
         existing = db.scalar(select(Worker).where(Worker.device_id == payload.device_id).with_for_update())
+        if existing is not None and owner_account_id is not None and existing.owner_account_id != owner_account_id:
+            raise HTTPException(403, 'Worker belongs to another account or requires administrator enrollment')
         if existing is None and payload.previous_device_id is not None:
             previous = db.scalar(select(Worker).where(Worker.device_id == payload.previous_device_id).with_for_update())
             if previous is not None:
+                if owner_account_id is not None and previous.owner_account_id != owner_account_id:
+                    raise HTTPException(403, 'Worker alias is not owned by this account')
                 previous.device_id = payload.device_id
                 db.flush()
                 existing = previous

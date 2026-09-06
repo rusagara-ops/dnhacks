@@ -1,6 +1,7 @@
 const $ = id => document.getElementById(id);
 let token = '', jobId = null, connected = false, polling = false, jobMode = 'summarization', connectionGeneration = 0, latestResult = null;
 let latestWorkers = [], submitting = false;
+let identity = null, creditQuote = null, ambiguousSubmission = false;
 const knownJobs = new Map();
 let jobsPage = 0, jobsOnPage = [], jobsHaveNext = false, jobsLoading = false, jobsRequest = 0;
 const locations = new ComputeLocations(api, () => renderModels());
@@ -16,6 +17,7 @@ const modes = {
   'coding-assistance': ['Get code help →', 'Explain code or suggest a fix. Suggestions are displayed, never executed.']
 };
 function updateMode() {
+  clearCreditQuote();
   const mode = $('mode').value;
   const coding = mode === 'coding-assistance';
   $('submit').textContent = modes[mode][0];
@@ -45,7 +47,7 @@ function el(tag, text, cls) {
 }
 async function api(path, body) {
   const response = await fetch('/api' + path, {
-    method: body === undefined ? 'GET' : 'POST',
+    method: body === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(15000),
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body)
   });
@@ -94,7 +96,8 @@ function renderModels() {
     ? 'The selected model is unavailable. Choose another model or use automatic worker assignment.'
     : previous ? 'Your job will use this exact model on a compatible worker.'
     : 'Uses the coordinator’s configured default model.';
-  $('submit').disabled = !connected || submitting || !available;
+  $('submit').disabled = !connected || submitting || !available || ambiguousSubmission;
+  $('submit').textContent = identity?.auth_mode === 'controlled' ? creditQuote ? `Reserve ${creditQuote.value.credits} credits and submit →` : 'Review demo credit cost →' : modes[mode][0];
 }
 function renderWorkers(workers, activity) {
   const candidates = workers.filter(w => w.status !== 'OFFLINE' && workerModels(w).some(m => m.supported_tasks.some(t => t in modes)));
@@ -265,6 +268,7 @@ $('show-token').onclick = () => {
   $('show-token').textContent = show ? 'Hide token' : 'Show token';
 };
 $('disconnect').onclick = () => {
+  identity = null; clearCreditQuote(); ambiguousSubmission = false; $('allow-resubmit').hidden = true;
   locations.disconnect();
   latestResult = null; $('download-result').disabled = true;
   connectionGeneration++; connected = false; token = ''; rememberToken('');
@@ -279,8 +283,14 @@ $('connect').onclick = async () => {
   token = $('token').value.trim();
   $('connect').disabled = true;
   try {
+    try { identity = await api('/me'); } catch (error) { if (error.status !== 404) throw error; identity = null; }
+    if (identity?.credential_kind === 'worker') throw Error('Use an account token in the dashboard. Worker credentials belong in the worker terminal.');
+    if (identity?.credential_kind === 'bootstrap') throw Error('This is a setup token. Open Sharing and credits above to create an administrator account, then connect with its account token.');
     await api('/workers?limit=1');
     connectionGeneration++; connected = true; locations.connected = true; locations.version++;
+    clearCreditQuote(); ambiguousSubmission = false; $('allow-resubmit').hidden = true;
+    if (identity?.auth_mode === 'controlled') { $('remember-token').checked = false; $('token').value = ''; }
+    $('remember-token').disabled = identity?.auth_mode === 'controlled';
     rememberToken($('remember-token').checked ? token : '');
     $('submit').disabled = false; $('disconnect').hidden = false;
     $('error').textContent = '';
@@ -296,6 +306,7 @@ try {
   if (saved) { $('token').value = saved; $('remember-token').checked = true; $('connect').click(); }
 } catch { /* Storage is optional. */ }
 $('submit').onclick = async () => {
+  if (!connected || submitting || ambiguousSubmission) return;
   const mode = $('mode').value;
   const instruction = ['document-qa', 'coding-assistance'].includes(mode) ? $('instruction').value.trim() : '';
   const document = $('inputs').value.trim();
@@ -306,17 +317,40 @@ $('submit').onclick = async () => {
     return;
   }
   submitting = true; $('submit').disabled = true;
+  const current = connectionGeneration;
+  let submittingJob = false;
   $('error').textContent = '';
   try {
-    const job = await api('/jobs', { task_type: mode, ...($('model').value ? {model_id: $('model').value} : {}), inputs: [document], optimization: 'fastest', ...(locations.selected ? {target_worker_id: locations.selected} : {}), ...(instruction ? {instruction} : {}) });
+    const payload = { task_type: mode, ...($('model').value ? {model_id: $('model').value} : {}), inputs: [document], optimization: 'fastest', ...(locations.selected ? {target_worker_id: locations.selected} : {}), ...(instruction ? {instruction} : {}) };
+    const signature = JSON.stringify(payload);
+    if (identity?.auth_mode === 'controlled' && creditQuote?.payload !== signature) {
+      const value = await api('/credits/quote', payload);
+      if (current !== connectionGeneration) return;
+      creditQuote = {payload: signature, value}; $('credit-quote').hidden = false;
+      $('credit-quote').textContent = `Reserve ${value.credits} demo credits for ${value.total_inputs} inputs. Accepted work is charged once; permanently failed inputs are refunded. No cash value. Confirm below to submit.`;
+      return;
+    }
+    submittingJob = true;
+    const job = await api('/jobs', payload);
+    if (current !== connectionGeneration) return;
+    clearCreditQuote();
     jobId = job.job_id;
     jobMode = mode;
     jobsPage = 0; await loadJobPage();
     $('result-title').textContent = {summarization: 'Document summary', 'document-qa': 'Answer', 'information-extraction': 'Extracted information', 'coding-assistance': 'Code assistance'}[mode];
     await refresh();
-  } catch (error) { $('error').textContent = error.message; }
+  } catch (error) {
+    if (current !== connectionGeneration) return;
+    ambiguousSubmission = submittingJob && (!error.status || error.status >= 500);
+    $('allow-resubmit').hidden = !ambiguousSubmission;
+    $('error').textContent = ambiguousSubmission ? 'Submission could not be confirmed. A job and credit reservation may already exist. Check recent jobs before submitting again.' : error.message;
+  }
   finally { submitting = false; renderModels(); }
 };
+function clearCreditQuote() { creditQuote = null; $('credit-quote').hidden = true; $('credit-quote').textContent = ''; }
+for (const id of ['inputs', 'instruction', 'model']) $(id).addEventListener('input', () => { clearCreditQuote(); renderModels(); });
+$('sample').addEventListener('click', () => { clearCreditQuote(); renderModels(); });
+$('allow-resubmit').onclick = () => { ambiguousSubmission = false; $('allow-resubmit').hidden = true; $('error').textContent = ''; renderModels(); };
 setInterval(refresh, 2000);
 
 $('download-result').onclick = () => {

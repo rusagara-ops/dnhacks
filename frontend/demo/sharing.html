@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Compute sharing · Stranded Compute</title>
+  <link rel="stylesheet" href="/demo/sharing.css">
+</head>
+<body>
+  <header><a href="/demo/" class="brand">SC / STRANDED COMPUTE</a><a href="/demo/">Back to jobs</a></header>
+  <main>
+    <div class="intro"><p class="eyebrow">YOUR MACHINE. YOUR CHOICE.</p><h1>Make your spare compute count.</h1><p>Control when you contribute, track demo credits, and manage access to your machines.</p><span class="badge">Demo credits · no cash value or payouts</span></div>
+    <section aria-labelledby="connection-title">
+      <h2 id="connection-title">Connect your account</h2>
+      <form id="connection-form" class="row"><label class="grow">Account token<input id="account-token" type="password" autocomplete="off" placeholder="Account token, or administrator setup token"></label><button id="connect">Connect</button><button id="disconnect" type="button" class="secondary" hidden>Disconnect and clear</button></form>
+      <p class="hint">Coordinator: <span id="coordinator-origin"></span>. This page keeps your token in memory only. Use an account token here; worker tokens belong in the worker terminal.</p>
+      <p id="transport-message" class="notice" hidden>This address uses HTTP. Credentials and task data need trusted HTTPS before using this beyond a trusted local demo.</p>
+      <p id="identity" role="status">Not connected</p><p id="error" role="alert"></p>
+    </section>
+    <aside id="one-time-secret" class="secret-panel" hidden aria-labelledby="secret-title">
+      <h2 id="secret-title">Save this credential once</h2><p id="secret-description"></p>
+      <label>New token<input id="new-token" type="password" readonly autocomplete="off"></label>
+      <div class="row"><button id="reveal-token" type="button" class="secondary">Reveal token</button><button id="copy-token" type="button" class="secondary">Copy token</button><button id="clear-token" type="button" class="secondary">I saved it — clear</button></div><p id="secret-status" role="status"></p>
+    </aside>
+    <div id="dashboard" hidden>
+      <p id="mode-message" class="notice"></p>
+      <section id="wallet-panel" aria-labelledby="wallet-title" hidden>
+        <div class="heading"><h2 id="wallet-title">Your demo credits</h2><button id="refresh-wallet" class="secondary" type="button">Refresh balance</button></div>
+        <div class="metrics"><div><strong id="available">—</strong><span>Available</span></div><div><strong id="reserved">—</strong><span>Reserved for jobs</span></div><div><strong id="earned">—</strong><span>Earned from accepted work</span></div></div>
+        <p class="hint">One demo credit per input. The coordinator reserves credits when you submit, pays accepted work once, and refunds permanently failed inputs. Earnings do not certify answer quality.</p>
+        <p id="wallet-error" role="status"></p><div class="table-wrap"><table><thead><tr><th>When</th><th>Entry</th><th>Available change</th><th>Reserved change</th><th>Job</th></tr></thead><tbody id="ledger"></tbody></table></div>
+        <div class="row"><button id="ledger-prev" type="button" class="secondary" disabled>Previous entries</button><span id="ledger-page"></span><button id="ledger-next" type="button" class="secondary" disabled>Next entries</button></div>
+      </section>
+      <section id="providers-panel" aria-labelledby="providers-title" hidden>
+        <div class="heading"><h2 id="providers-title">Your compute machines</h2><button id="refresh-workers" class="secondary" type="button">Refresh machines</button></div>
+        <p class="hint">Pausing stops new assignments. Work already running finishes normally. Schedules use UTC. These settings decide whether to accept work; they do not isolate programs or enforce OS/GPU resource caps.</p>
+        <p id="providers-error" role="status"></p><div id="providers" class="provider-grid"></div>
+      </section>
+      <section id="credentials-panel" aria-labelledby="credentials-title" hidden>
+        <h2 id="credentials-title">Worker access</h2><p class="hint">Each installation gets its own revocable worker credential. Get its installation ID with <code>worker/.venv/bin/python worker/run.py --show-device-id</code>, then paste that ID here. Newly enrolled workers start paused; review their settings before sharing.</p>
+        <form id="credential-form"><div class="row"><label class="grow">Installation ID<input id="device-id" required placeholder="UUID from the worker terminal" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"></label><label class="grow">Label<input id="credential-label" required maxlength="200" placeholder="Kevin’s Mac"></label><button>Create worker credential</button></div><p id="credential-error" role="status"></p></form>
+        <p class="hint">Revoking a credential immediately blocks its next API request, including completion of an active task. Pause and let work finish before revoking when possible.</p><div id="credentials"></div>
+      </section>
+      <section id="admin-panel" aria-labelledby="admin-title" hidden>
+        <h2 id="admin-title">Administrator enrollment</h2><p id="bootstrap-help" class="hint"></p>
+        <form id="account-form"><div class="row"><label class="grow">Account name<input id="account-name" required maxlength="200"></label><label>Role<select id="account-role"><option value="member">Member</option><option value="admin">Administrator</option></select></label><button>Create account</button></div><p id="account-error" role="status"></p></form>
+        <div id="accounts"></div>
+        <form id="grant-form" hidden><h3>Grant demo credits</h3><div class="row"><label class="grow">Recipient<select id="grant-account" required></select></label><label>Amount<input id="grant-amount" type="number" min="1" max="1000000" step="1" value="20" required></label><button>Grant demo credits</button></div><p class="hint">A retry after an uncertain response reuses the same grant request ID to prevent a duplicate grant.</p><p id="grant-message" role="status"></p></form>
+        <form id="enroll-form" hidden><h3>Adopt an existing demo worker</h3><p class="hint">An administrator can assign an unowned, idle worker to an account. This does not transfer an already owned worker.</p><div class="row"><label class="grow">Account<select id="enroll-account" required></select></label><label class="grow">Existing worker ID<input id="enroll-worker" required placeholder="Worker UUID"></label><button>Assign worker</button></div><p id="enroll-message" role="status"></p></form>
+      </section>
+    </div>
+  </main>
+  <footer>Share with approved participants. Providers can inspect data their computers process. Demo credits are not money.</footer>
+  <script src="/demo/sharing.js"></script>
+</body>
+</html>

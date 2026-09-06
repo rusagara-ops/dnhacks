@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.db.database import get_db
+from app.core.security import require_account, authorize_worker, authorize_registration
 from app.models import Worker
 from app.schemas.worker import HeartbeatRequest, HeartbeatResponse, WorkerRegisterRequest, WorkerRegisterResponse, WorkerResponse
 from app.services.task_service import renew_heartbeat
@@ -26,6 +27,7 @@ def locations(request: Request,
               gpu_only: bool = False, online_only: bool = False,
               limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
               db: Session = Depends(get_db)):
+    require_account(request)
     if (latitude is None) != (longitude is None):
         raise HTTPException(422, 'Provide both latitude and longitude')
     return list_locations(db, request.app.state.settings, latitude, longitude, task_type,
@@ -34,33 +36,39 @@ def locations(request: Request,
 
 @router.post('/register', status_code=201, response_model=WorkerRegisterResponse)
 def register(payload: WorkerRegisterRequest, request: Request, db: Session = Depends(get_db)):
-    worker = worker_service.register_worker(db, payload)
+    principal = authorize_registration(request, payload)
+    worker = worker_service.register_worker(db, payload, owner_account_id=principal.account_id)
     logger.info('Worker registered: %s', worker.id)
     return WorkerRegisterResponse(worker_id=worker.id, heartbeat_interval_seconds=request.app.state.settings.heartbeat_interval_seconds)
 
 
 @router.post('/locations/search', response_model=WorkerLocationsResponse)
 def nearby_workers(payload: WorkerDiscoveryRequest, request: Request, db: Session = Depends(get_db)):
+    require_account(request)
     # Visitor coordinates go in the body, not URL/access-log query strings.
     return list_locations(db, request.app.state.settings, **payload.model_dump())
 
 
 @router.get('', response_model=list[WorkerResponse])
 def workers(request: Request, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), include_history: bool = False, db: Session = Depends(get_db)):
+    require_account(request)
     return worker_service.list_workers(db, request.app.state.settings.worker_timeout_seconds, limit, offset, include_history)
 
 
 @router.post('/{worker_id}/heartbeat', response_model=HeartbeatResponse)
 def heartbeat(worker_id: UUID, payload: HeartbeatRequest, request: Request, db: Session = Depends(get_db)):
+    authorize_worker(request, worker_id, allow_worker_credential=True)
     expiry = renew_heartbeat(db, worker_id, payload, request.app.state.settings)
     return HeartbeatResponse(lease_expires_at=expiry)
 
 
 @router.post('/{worker_id}/location', response_model=WorkerResponse)
 def set_location(worker_id: UUID, payload: WorkerLocationUpdate, request: Request, db: Session = Depends(get_db)):
+    authorize_worker(request, worker_id)
     return worker_service.update_location(db, worker_id, payload.location, request.app.state.settings.worker_timeout_seconds)
 
 
 @router.post('/{worker_id}/next-task', response_model=NextTaskResponse)
 def next_task(worker_id: UUID, request: Request, model_id: str | None = Query(None, min_length=1, max_length=200), db: Session = Depends(get_db)):
+    authorize_worker(request, worker_id, allow_worker_credential=True)
     return get_next_task(db, worker_id, request.app.state.settings, model_id)

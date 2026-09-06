@@ -12,7 +12,7 @@ const worker = (id, name, latitude, longitude, extra = {}) => ({
   last_heartbeat: new Date().toISOString(), location: {site: name + ' campus', latitude, longitude}, ...extra
 });
 
-async function setup(page) {
+async function setup(page, {controlled = false} = {}) {
   const workers = [worker('near', 'New York GPU', 40.71, -74.01),
     worker('far', 'West Coast GPU', 32.72, -117.16),
     worker('offline', 'Offline GPU', 51.51, -.13, {status: 'OFFLINE'}),
@@ -28,6 +28,8 @@ async function setup(page) {
       const type = name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : name.endsWith('.svg') ? 'image/svg+xml' : 'text/html';
       return route.fulfill({contentType: type, body: await fs.readFile(path.join(__dirname, '..', name))});
     }
+    if (url.pathname === '/api/me') return route.fulfill({json: {auth_mode: controlled ? 'controlled' : 'demo', credential_kind: controlled ? 'account' : 'demo', name: 'Test account', role: 'member'}});
+    if (url.pathname === '/api/credits/quote') return route.fulfill({json: {total_inputs: 1, credits: 1, unit: 'demo credits', pricing_version: 'demo-v1'}});
     if (url.pathname === '/api/workers/locations' || url.pathname === '/api/workers/locations/search') {
       queries.push(url.searchParams);
       const origin = route.request().method() === 'POST' ? route.request().postDataJSON() : null;
@@ -91,6 +93,19 @@ test('map discovery, explicit assignment, automatic reset, and disconnect', asyn
   await page.locator('.compute-explorer').screenshot({path: '/private/tmp/dnhacks-compute-desktop.png'});
   await page.locator('#disconnect').click();
   await expect(page.locator('.compute-pin')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('controlled demo quotes before reserving credits and never persists account token', async ({page}) => {
+  const {submissions, errors} = await setup(page, {controlled: true});
+  await expect(page.locator('#remember-token')).toBeDisabled();
+  await page.locator('#submit').click();
+  await expect(page.locator('#credit-quote')).toContainText('Reserve 1 demo credits');
+  expect(submissions).toHaveLength(0);
+  await page.locator('#submit').click();
+  await expect.poll(() => submissions.length).toBe(1);
+  expect(await page.evaluate(() => sessionStorage.getItem('coordinatorToken'))).toBeNull();
+  await expect(page.locator('#credit-quote')).toBeHidden();
   expect(errors).toEqual([]);
 });
 

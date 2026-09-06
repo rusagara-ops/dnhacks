@@ -1,6 +1,6 @@
 import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ApiError, request, type Connection, type Job, type Worker, type Results, type Activity } from './api';
+import { ApiError, request, type Connection, type Job, type Worker, type Results, type Activity, type Identity, type CreditQuote } from './api';
 import { createPayload, type TaskType } from './validation';
 import './style.css';
 import { Distribution } from './WorkDistribution';
@@ -15,6 +15,9 @@ function App() {
   const [token, setToken] = useState(saved?.token ?? '');
   const [remember, setRemember] = useState(!!saved);
   const [connection, setConnection] = useState<Connection | null>(null);
+  const [identity, setIdentity] = useState<Identity | null>(null);
+  const [sharingUrl, setSharingUrl] = useState((saved?.url ?? 'http://192.168.11.139:8000') + '/demo/sharing.html');
+  const [quote, setQuote] = useState<{payload: string; value: CreditQuote} | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [connectionError, setConnectionError] = useState('');
   const [mode, setMode] = useState<TaskType>('summarization');
@@ -36,7 +39,7 @@ function App() {
   const pollGeneration = useRef(0);
 
   function disconnect() {
-    generation.current++; pollGeneration.current++; setConnection(null); setToken(''); setRemember(false);
+    generation.current++; pollGeneration.current++; setConnection(null); setToken(''); setRemember(false); setIdentity(null); setQuote(null);
     setJobs([]); setWorkers([]); setActivity(null); setSelectedId(null); setJob(null); setResults(null); setPollError(''); setSubmitError(''); setAmbiguous(false); setConnectionError('');
     try { sessionStorage.removeItem('sc-connection'); } catch { /* Storage may be disabled. */ }
   }
@@ -46,10 +49,17 @@ function App() {
       const parsed = new URL(url);
       if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== '/') throw new Error('Use a backend origin such as http://192.168.1.5:8000.');
       const next = { url: parsed.origin, token: token.trim() };
+      setSharingUrl(parsed.origin + '/demo/sharing.html');
       await request(next, '/health'); await request(next, '/ready');
+      let me: Identity | null = null;
+      try { me = await request<Identity>(next, '/api/me'); } catch (error) { if (!(error instanceof ApiError) || error.status !== 404) throw error; }
+      if (me?.credential_kind === 'worker') throw new Error('Use an account token in the dashboard. Worker credentials belong in the worker terminal.');
+      if (me?.credential_kind === 'bootstrap') throw new Error('This is a setup token. Open Sharing and credits below to create an administrator account, then connect with its account token.');
       const list = await request<Job[]>(next, '/api/jobs?limit=100&offset=0');
+      setIdentity(me); setQuote(null);
       generation.current++; pollGeneration.current++; setConnection(next); setJobs(list); setWorkers([]); setActivity(null); setSelectedId(null); setJob(null); setResults(null); setPollError(''); setSubmitError(''); setAmbiguous(false);
-      try { if (remember) sessionStorage.setItem('sc-connection', JSON.stringify(next)); else sessionStorage.removeItem('sc-connection'); } catch { setConnectionError('Connected, but this browser could not remember settings for this tab.'); }
+      if (me?.auth_mode === 'controlled') { setRemember(false); setToken(''); }
+      try { if (remember && me?.auth_mode !== 'controlled') sessionStorage.setItem('sc-connection', JSON.stringify(next)); else sessionStorage.removeItem('sc-connection'); } catch { setConnectionError('Connected, but this browser could not remember settings for this tab.'); }
     } catch (error) { setConnectionError((error as Error).message); }
     finally { setConnecting(false); }
   }
@@ -77,18 +87,27 @@ function App() {
     void poll();
     return () => { pollGeneration.current++; clearTimeout(timer); };
   }, [connection, selectedId]);
+  useEffect(() => { setQuote(null); }, [mode, source, instruction, sections]);
   function select(id: string, detail: Job | null = null) { if (id === selectedId) return; pollGeneration.current++; setSelectedId(id); setJob(detail); setResults(null); }
   async function submit(event: React.FormEvent) {
     event.preventDefault(); if (!connection || submitLock.current || ambiguous) return;
     setSubmitError(''); let payload;
     try { payload = createPayload(mode, source, instruction, sections); } catch (error) { setSubmitError((error as Error).message); return; }
     submitLock.current = true; setSubmitting(true); const current = generation.current;
+    let submittingJob = false;
     try {
+      const encoded = JSON.stringify(payload);
+      if (identity?.auth_mode === 'controlled' && quote?.payload !== encoded) {
+        const value = await request<CreditQuote>(connection, '/api/credits/quote', {method: 'POST', body: encoded});
+        if (current === generation.current) setQuote({payload: encoded, value});
+        return;
+      }
+      submittingJob = true;
       const created = await request<{job_id: string}>(connection, '/api/jobs', {method: 'POST', body: JSON.stringify(payload)});
-      if (current === generation.current) select(created.job_id);
+      if (current === generation.current) { select(created.job_id); setQuote(null); }
     } catch (error) {
       if (current !== generation.current) return;
-      const uncertain = !(error instanceof ApiError) || error.status >= 500;
+      const uncertain = submittingJob && (!(error instanceof ApiError) || error.status >= 500);
       setAmbiguous(uncertain); setSubmitError(uncertain ? 'Submission could not be confirmed. A job may already exist. Check recent jobs before submitting again.' : (error as Error).message);
     } finally { submitLock.current = false; setSubmitting(false); }
   }
@@ -101,8 +120,8 @@ function App() {
   return <div className="shell"><header><a className="brand" href="/"><span className="logo">s/c</span> STRANDED COMPUTE</a><span className="edition">DNHACKS / 2026</span></header><main>
     <div className="intro"><div><p className="eyebrow">SHARED AI COMPUTE</p><h1>Your work.<br/><span>Powered by the network.</span></h1><p className="lede">Send documents and code to a connected compute worker.<br/>Follow execution and explore the results in one place.</p></div><div className="network" aria-hidden="true"><i/><i/><b>SC</b><i/><i/></div></div>
     <section className="panel"><div className="section-heading"><h2>Backend connection</h2><span className={`badge ${connection && !pollError ? 'good' : ''}`}>{connection ? pollError ? 'Connection interrupted' : 'Connected' : 'Not connected'}</span></div>
-      <form onSubmit={connect}><div className="connection-form"><label>Backend URL<input type="url" required value={url} onChange={e => setUrl(e.target.value)} disabled={submitting || connecting}/></label><label>Shared demo token<input type="password" autoComplete="off" value={token} onChange={e => setToken(e.target.value)} disabled={submitting || connecting}/></label><button disabled={connecting || submitting}>{connecting ? 'Connecting…' : 'Connect'}</button></div><label className="remember"><input type="checkbox" checked={remember} disabled={connecting} onChange={e => { setRemember(e.target.checked); if (!e.target.checked) { try { sessionStorage.removeItem('sc-connection'); } catch {} } }}/> Remember connection in this tab after connecting</label></form>
-      <p className="hint">Use Abel’s LAN address. The demo token is browser-visible. {connection && `Active backend: ${connection.url}`}</p>{connection && <button className="secondary" disabled={connecting || submitting} onClick={disconnect}>Disconnect and forget token</button>}{connectionError && <p className="error" role="alert">{connectionError}</p>}
+      <form onSubmit={connect}><div className="connection-form"><label>Backend URL<input type="url" required value={url} onChange={e => setUrl(e.target.value)} disabled={submitting || connecting}/></label><label>Account or demo token<input type="password" autoComplete="off" value={token} onChange={e => setToken(e.target.value)} disabled={submitting || connecting}/></label><button disabled={connecting || submitting}>{connecting ? 'Connecting…' : 'Connect'}</button></div><label className="remember"><input type="checkbox" checked={remember} disabled={connecting || identity?.auth_mode === 'controlled'} onChange={e => { setRemember(e.target.checked); if (!e.target.checked) { try { sessionStorage.removeItem('sc-connection'); } catch {} } }}/> Remember demo connection in this tab after connecting</label></form>
+      <p className="hint">Use Abel’s LAN address. {identity?.auth_mode === 'controlled' ? 'Account credentials stay in memory only.' : 'The demo token is browser-visible.'} {connection && `Active backend: ${connection.url}`}</p><p><a href={sharingUrl} target="_blank" rel="noopener noreferrer">Sharing and credits ↗</a><span className="hint"> · provider controls, worker access, and demo earnings</span></p>{connection && <button className="secondary" disabled={connecting || submitting} onClick={disconnect}>Disconnect and forget token</button>}{connectionError && <p className="error" role="alert">{connectionError}</p>}
     </section>
     {pollError && <p className="error" role="alert">{pollError} Some displayed data may be stale. Retrying automatically.</p>}
     <div className="workspace"><section className="panel composer"><h2>Create a job</h2><form onSubmit={submit}><label className="field">Task<select value={mode} disabled={submitting} onChange={e => { setMode(e.target.value as TaskType); setSubmitError(''); }}>{Object.entries(modes).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -112,7 +131,8 @@ function App() {
       <textarea id="source" value={source} onChange={e => setSource(e.target.value)} disabled={submitting} placeholder={mode === 'coding-assistance' ? 'Paste code to explain, review, or improve…' : 'Paste your source document here…'}/><p className="hint">{new TextEncoder().encode(source).length.toLocaleString()} UTF-8 bytes{mode !== 'sentiment-classification' && !sections && ' / 6,000 maximum'}</p>
       {['document-qa', 'coding-assistance'].includes(mode) && <label className="field">{mode === 'document-qa' ? 'Question (required)' : 'Request (optional)'}<textarea className="instruction" value={instruction} onChange={e => setInstruction(e.target.value)} disabled={submitting} placeholder="What would you like to know?"/><span className="hint">Up to 1,000 characters; source plus request up to 6,500 UTF-8 bytes.</span></label>}
       {submitError && <p className="error" role="alert">{submitError}</p>}{ambiguous && <button type="button" className="secondary" onClick={() => { setAmbiguous(false); setSubmitError(''); }}>I checked recent jobs — allow another submission</button>}
-      <button className="submit" disabled={!connection || connecting || submitting || ambiguous || !source.trim()}>{submitting ? 'Submitting…' : `${modes[mode]} →`}</button><p className="hint">{connection ? 'The coordinator selects the configured model. A compatible worker must be online to execute the job.' : 'Connect to the backend to submit a job.'}</p>
+      {quote && <p className="notice" role="status">Reserve {quote.value.credits} demo credits for {quote.value.total_inputs} inputs. Accepted work is charged once; permanently failed inputs are refunded. Demo credits have no cash value. Confirm below to submit.</p>}
+      <button className="submit" disabled={!connection || connecting || submitting || ambiguous || !source.trim()}>{submitting ? 'Working…' : identity?.auth_mode === 'controlled' ? quote ? `Reserve ${quote.value.credits} credits and submit →` : 'Review demo credit cost →' : `${modes[mode]} →`}</button><p className="hint">{connection ? 'The coordinator selects the configured model. A compatible worker must be online to execute the job.' : 'Connect to the backend to submit a job.'}</p>
     </form></section>
     <section className="panel"><div className="section-heading"><h2>Job progress</h2><span className="pill">↻ Every second</span></div>{job ? <><span className="badge">{job.status}</span><p className="job-id">{job.id}</p><p className="hint">{job.task_type} · {job.model_id ?? 'No model configured'}</p><div className="progress-number">{Math.round(job.progress_percentage)}<span>%</span></div><progress max="100" value={job.progress_percentage} aria-label="Successfully completed tasks"/><div className="metrics"><div><strong>{job.total_inputs}</strong><span>Inputs</span></div><div><strong>{job.completed_tasks}/{job.total_tasks}</strong><span>Tasks complete</span></div><div><strong>{job.failed_tasks}</strong><span>Tasks failed</span></div></div>{!job.model_id && <p className="notice">This job cannot run without a model pin. Configure the backend model and submit a new job.</p>}{job.model_id?.startsWith('simulation/') && <p className="notice">Simulation: results are fabricated for testing.</p>}{job.status === 'FAILED' && <p className="error">This job is final with failures. Successful partial results remain available below.</p>}</> : <div className="empty"><span>◎</span><h3>{selectedId ? 'Loading job…' : 'Ready when you are'}</h3><p>{selectedId ?? 'Submit work or select a recent job.'}</p></div>}</section></div>
     {job && results && <Distribution job={job} results={results} workers={workers} stale={!!pollError}/>}
