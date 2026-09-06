@@ -2,6 +2,7 @@ const $ = id => document.getElementById(id);
 let token = '', jobId = null, connected = false, polling = false, jobMode = 'summarization';
 let connectionGeneration = 0, latestResult = null, latestWorkers = [], submitting = false;
 let selectedWorkerId = '';
+let selectedActivityTaskId = '';
 
 const example = `The city library is launching a three-month pilot to make its services easier to access. Starting in October, weekday closing time will move from 6 p.m. to 9 p.m. The change follows requests from residents who work during the day and need a quiet place to study in the evening.
 
@@ -229,7 +230,68 @@ async function openJob(id, mode) {
   try { const result = await api(`/jobs/${id}/results`); if (connected && jobId === id) renderResults(result); }
   catch (error) { $('error').textContent = error.message; }
 }
-function renderActivity(data, jobs, workers) {
+function formatTaskType(value) {
+  return String(value || 'Task').replace(/[-_]/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
+}
+function formatWhen(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString();
+}
+function formatDuration(seconds) {
+  return Number.isFinite(seconds) ? `${seconds.toFixed(1)}s` : '—';
+}
+function formatExecution(task) {
+  return Number.isFinite(task.execution_time_ms) ? `${(task.execution_time_ms / 1000).toFixed(2)}s measured` : `${formatDuration(task.elapsed_seconds)} wall time`;
+}
+function detailRow(label, value) {
+  const row = el('div', undefined, 'activity-detail-row');
+  row.append(el('dt', label), el('dd', value == null || value === '' ? '—' : String(value)));
+  return row;
+}
+function showActivityDetail(task) {
+  selectedActivityTaskId = task.task_id;
+  const panel = $('activity-detail');
+  panel.replaceChildren();
+  const heading = el('div', undefined, 'activity-detail-heading');
+  const title = el('div');
+  title.append(el('p', 'TASK DETAILS', 'eyebrow'), el('h3', formatTaskType(task.task_type)));
+  heading.append(title, el('span', task.status, `badge activity-status-${String(task.status || '').toLowerCase()}`));
+  panel.append(heading);
+  panel.append(el('p', `${task.worker_name || 'Waiting for a worker'} · ${task.model_id || 'Coordinator default'}`, 'activity-detail-summary'));
+  const grid = el('dl', undefined, 'activity-detail-grid');
+  const inputStart = Number.isInteger(task.start_index) ? task.start_index + 1 : null;
+  const inputEnd = inputStart !== null && Number.isInteger(task.input_count) ? inputStart + task.input_count - 1 : null;
+  grid.append(
+    detailRow('Computer', task.worker_name || 'Unassigned'),
+    detailRow('Worker ID', task.worker_id || '—'),
+    detailRow('Model', task.model_id || 'Coordinator default'),
+    detailRow('Model revision', task.model_revision || '—'),
+    detailRow('Task', formatTaskType(task.task_type)),
+    detailRow('Input range', inputStart === null ? '—' : `${inputStart}${inputEnd === inputStart ? '' : `–${inputEnd}`}`),
+    detailRow('Queue time', formatDuration(task.queue_seconds)),
+    detailRow('Execution', formatExecution(task)),
+    detailRow('Attempts', task.attempt_count),
+    detailRow('Created', formatWhen(task.created_at)),
+    detailRow('Started', formatWhen(task.started_at)),
+    detailRow('Completed', formatWhen(task.completed_at)),
+    detailRow('Job ID', task.job_id),
+    detailRow('Task ID', task.task_id)
+  );
+  panel.append(grid);
+  if (task.error_code) panel.append(el('p', `Failure code: ${task.error_code}`, 'failure'));
+  if (task.inference_metrics) {
+    const metrics = task.inference_metrics;
+    const generation = Number.isFinite(metrics.generation_duration_ms) ? `${(metrics.generation_duration_ms / 1000).toFixed(2)}s` : '—';
+    const rate = metrics.output_tokens && metrics.generation_duration_ms ? ` · ${(metrics.output_tokens * 1000 / metrics.generation_duration_ms).toFixed(1)} tokens/s` : '';
+    panel.append(el('p', `Prompt tokens ${metrics.prompt_tokens ?? '—'} · Output tokens ${metrics.output_tokens ?? '—'} · Generation ${generation}${rate}`, 'activity-detail-metrics'));
+  }
+  const open = el('button', 'Open full job results', 'subtle');
+  open.type = 'button'; open.onclick = () => openJob(task.job_id, task.task_type);
+  panel.append(open);
+  panel.hidden = false;
+}
+function renderActivity(data, workers) {
   const counts = data.task_counts || {};
   const cards = {
     Queued: counts.QUEUED || 0,
@@ -294,32 +356,31 @@ function renderActivity(data, jobs, workers) {
 
   $('activity').replaceChildren();
   for (const task of (data.recent_tasks || []).slice(0, 12)) {
-    const row = el('div', undefined, 'activity-row');
+    const row = el('button', undefined, `activity-row${selectedActivityTaskId === task.task_id ? ' selected' : ''}`);
+    row.type = 'button';
     const main = el('div', undefined, 'activity-main');
-    main.append(el('strong', task.task_type), el('span', `${task.worker_name || 'Waiting for a worker'} · ${task.status}`));
-    main.append(el('small', `Queue ${task.queue_seconds}s · Execution ${task.elapsed_seconds ?? '—'}s · Attempt ${task.attempt_count}${task.error_code ? ' · ' + task.error_code : ''}`));
+    main.append(el('strong', formatTaskType(task.task_type)), el('span', `${task.worker_name || 'Waiting for a worker'} · ${task.model_id || 'Coordinator default'}`));
+    main.append(el('small', `Queue ${formatDuration(task.queue_seconds)} · Execution ${formatExecution(task)} · Attempt ${task.attempt_count}${task.error_code ? ' · ' + task.error_code : ''}`));
     row.append(main);
-    const button = el('button', `Job ${task.job_id.slice(0, 8)}`, 'subtle');
-    button.onclick = () => openJob(task.job_id, task.task_type);
-    row.append(button); $('activity').append(row);
+    row.append(el('span', task.status, `badge activity-status-${String(task.status || '').toLowerCase()}`));
+    row.setAttribute('aria-label', `View details for ${formatTaskType(task.task_type)} on ${task.worker_name || 'unassigned worker'}`);
+    row.onclick = () => showActivityDetail(task);
+    $('activity').append(row);
   }
   if (!(data.recent_tasks || []).length) $('activity').append(el('p', 'No tasks yet.'));
-
-  $('history').replaceChildren();
-  for (const job of jobs) {
-    const button = el('button', `${job.task_type} · ${job.status} · ${job.id.slice(0, 8)}`, 'subtle');
-    button.onclick = () => openJob(job.id, job.task_type); $('history').append(button);
-  }
+  const selected = (data.recent_tasks || []).find(task => task.task_id === selectedActivityTaskId);
+  if (selected) showActivityDetail(selected);
+  else if (!(data.recent_tasks || []).length) $('activity-detail').hidden = true;
 }
 async function refresh() {
   if (polling || !connected) return;
   polling = true;
   const generation = connectionGeneration;
   try {
-    const [workers, activity, jobs] = await Promise.all([api('/workers?limit=500'), api('/activity'), api('/jobs?limit=10')]);
+    const [workers, activity] = await Promise.all([api('/workers?limit=500'), api('/activity')]);
     if (!connected || generation !== connectionGeneration) return;
     latestWorkers = workers;
-    renderModels(); renderWorkerPicker(workers); renderWorkers(workers, activity); renderActivity(activity, jobs, workers);
+    renderModels(); renderWorkerPicker(workers); renderWorkers(workers, activity); renderActivity(activity, workers);
     if (jobId) {
       const selectedJob = jobId;
       const result = await api(`/jobs/${selectedJob}/results`);
@@ -345,7 +406,8 @@ $('disconnect').onclick = () => {
   latestWorkers = []; selectedWorkerId = ''; $('model').value = ''; renderModels(); renderWorkerPicker([]);
   $('token').value = ''; $('token').type = 'password'; $('show-token').textContent = 'Show token';
   $('submit').disabled = true; $('disconnect').hidden = true; $('connection').textContent = 'Disconnected';
-  for (const id of ['workers', 'overview', 'distribution', 'activity', 'history', 'results']) $(id).replaceChildren();
+  for (const id of ['workers', 'overview', 'distribution', 'activity', 'results']) $(id).replaceChildren();
+  $('activity-detail').replaceChildren(); $('activity-detail').hidden = true; selectedActivityTaskId = '';
   $('activity-updated').textContent = 'Waiting for a connection';
 };
 $('remember-token').onchange = () => rememberToken(connected && $('remember-token').checked ? token : '');

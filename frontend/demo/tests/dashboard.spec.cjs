@@ -26,8 +26,8 @@ async function setup(page) {
     if (url.pathname === '/api/workers') return route.fulfill({json: workers});
     if (url.pathname === '/api/activity') return route.fulfill({json: {
       as_of: new Date().toISOString(), task_counts: {QUEUED: 1, ASSIGNED: 1, RUNNING: 0, COMPLETED: 4, FAILED: 0}, retries: 1,
-      active_tasks: [{task_id: 'active-task', job_id: 'active-job', task_type: 'summarization', status: 'ASSIGNED', worker_id: 'abel', worker_name: 'Abel-Mac', attempt_count: 1, elapsed_seconds: 2, queue_seconds: 1}],
-      recent_tasks: [{task_id: 'active-task', job_id: 'active-job', task_type: 'summarization', status: 'ASSIGNED', worker_id: 'abel', worker_name: 'Abel-Mac', attempt_count: 1, elapsed_seconds: 2, queue_seconds: 1}],
+      active_tasks: [{task_id: 'active-task', job_id: 'active-job', task_type: 'summarization', status: 'ASSIGNED', worker_id: 'abel', worker_name: 'Abel-Mac', model_id: 'gemma3:12b', model_revision: 'test-digest', start_index: 0, input_count: 1, attempt_count: 1, elapsed_seconds: 2, queue_seconds: 1}],
+      recent_tasks: [{task_id: 'active-task', job_id: 'active-job', task_type: 'summarization', status: 'ASSIGNED', worker_id: 'abel', worker_name: 'Abel-Mac', model_id: 'gemma3:12b', model_revision: 'test-digest', start_index: 0, input_count: 1, attempt_count: 1, elapsed_seconds: 2, queue_seconds: 1}],
       worker_metrics: [{worker_id: 'abel', completed_tasks: 4, completed_inputs: 4, average_execution_ms: 4200}]
     }});
     if (url.pathname === '/api/jobs' && route.request().method() === 'POST') {
@@ -52,6 +52,11 @@ test('shows worker selection and coordinator task distribution without a map', a
   await expect(page.locator('#distribution')).toContainText('Abel-Mac');
   await expect(page.locator('#distribution')).toContainText('RUNNING ON THIS COMPUTER');
   await expect(page.locator('#activity')).toContainText('Abel-Mac');
+  await expect(page.getByRole('heading', {name: 'Recent jobs'})).toHaveCount(0);
+  await page.locator('#activity .activity-row').click();
+  await expect(page.locator('#activity-detail')).toContainText('Abel-Mac');
+  await expect(page.locator('#activity-detail')).toContainText('gemma3:12b');
+  await expect(page.locator('#activity-detail')).toContainText('Model revision');
   expect(errors).toEqual([]);
 });
 

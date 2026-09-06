@@ -453,7 +453,7 @@ Migration `78ccab156bc1` adds a nullable unique `workers.device_id`. Updated wor
 
 `GET /api/activity` exposes authenticated current ownership (up to 100 active tasks), the 30 most recently created tasks, task-state totals, retries, and per-worker completed-task/input counts with average execution milliseconds. Historical metrics span retained data; they are not a real-time throughput benchmark. Queue seconds for retries include prior attempts, and elapsed seconds are for the current/latest attempt. All metric requests remain read-only.
 
-The dashboard adds recent jobs, result JSON download, connection status, show/hide token, Enter-to-connect, optional sessionStorage remembering, and Disconnect. Remembering is opt-in and tab-scoped; Disconnect removes the stored token. The token is never put in a URL or downloaded result.
+The dashboard shows clickable recent task activity with worker, model, timing, attempt, and inference details, plus full job results and JSON download. It also provides connection status, show/hide token, Enter-to-connect, optional sessionStorage remembering, and Disconnect. Remembering is opt-in and tab-scoped; Disconnect removes the stored token. The token is never put in a URL or downloaded result.
 
 See `backend/TEAM_HANDOFF.md` for Abel/Kevin/Ronald ownership and acceptance checks.
 
