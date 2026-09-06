@@ -13,7 +13,7 @@ const worker = (id, name, extra = {}) => ({
 });
 
 async function setup(page) {
-  const workers = [worker('abel', 'Abel-Mac'), worker('kevin', 'Kevin-Mac', {ram_gb: 8, ram_available_gb: 4, model_id: 'qwen2.5-coder:3b'})];
+  const workers = [worker('abel', 'Abel-Mac'), worker('kevin', 'Kevin-Mac', {ram_gb: 8, ram_available_gb: 4, model_id: 'qwen2.5-coder:3b'}), worker('abel-old', 'Abel-Mac', {status: 'OFFLINE'})];
   const submissions = [], errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('https://coordinator.test/**', async route => {
@@ -47,6 +47,7 @@ test('shows worker selection and coordinator task distribution without a map', a
   const {errors} = await setup(page);
   await expect(page.locator('#compute-map, #location-invite, .leaflet-container')).toHaveCount(0);
   await expect(page.locator('#worker-picker .picker-card')).toHaveCount(2);
+  await expect(page.locator('#workers .worker')).toHaveCount(2);
   await expect(page.locator('#overview .telemetry-card')).toHaveCount(5);
   await expect(page.locator('#distribution .distribution-card')).toHaveCount(1);
   await expect(page.locator('#distribution')).toContainText('Abel-Mac');

@@ -80,14 +80,18 @@ function workerModels(worker) {
 }
 function uniqueWorkers(workers) {
   const modernHosts = new Set(workers.filter(w => w.device_id).map(w => w.hostname));
-  const seen = new Set();
-  return workers.filter(w => {
-    if (!w.device_id && modernHosts.has(w.hostname) && w.status === 'OFFLINE') return false;
+  const selected = new Map();
+  for (const worker of workers) {
+    const w = worker;
+    if (!w.device_id && modernHosts.has(w.hostname) && w.status === 'OFFLINE') continue;
     const key = w.device_id || `legacy:${w.hostname}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+    const previous = selected.get(key);
+    if (!previous || (previous.status === 'OFFLINE' && w.status !== 'OFFLINE')) selected.set(key, w);
+  }
+  return [...selected.values()];
+}
+function activeWorkers(workers) {
+  return uniqueWorkers(workers).filter(worker => worker.status !== 'OFFLINE');
 }
 function workerSupports(worker, mode, modelId = '') {
   return workerModels(worker).some(model => model.supported_tasks.includes(mode) && (!modelId || model.model_id === modelId));
@@ -126,12 +130,12 @@ function renderWorkerPicker(workers) {
   const list = $('worker-picker');
   const mode = $('mode').value;
   const modelId = $('model').value;
-  const relevant = uniqueWorkers(workers).filter(w => workerSupports(w, mode, modelId));
+  const relevant = activeWorkers(workers).filter(w => workerSupports(w, mode, modelId));
   const online = relevant.filter(w => w.status !== 'OFFLINE').length;
   $('workers-match').textContent = connected ? `${online} online · ${relevant.length} compatible` : 'Connect to see workers';
   list.replaceChildren();
   for (const worker of relevant) {
-    const onlineNow = worker.status !== 'OFFLINE';
+    const onlineNow = true;
     const selected = selectedWorkerId === worker.id;
     const card = el('article', undefined, `picker-card${selected ? ' selected' : ''}`);
     const header = el('div', undefined, 'picker-card-header');
@@ -165,11 +169,11 @@ $('automatic-worker').onclick = () => {
   renderWorkerPicker(latestWorkers);
 };
 function renderWorkers(workers, activity) {
-  const candidates = uniqueWorkers(workers).filter(w => workerModels(w).some(m => m.supported_tasks.some(t => t in modes)));
+  const candidates = activeWorkers(workers).filter(w => workerModels(w).some(m => m.supported_tasks.some(t => t in modes)));
   $('workers').replaceChildren();
   for (const w of candidates) {
     const card = el('article', undefined, 'worker');
-    const online = w.status !== 'OFFLINE';
+    const online = true;
     const shared = w.gpu_memory_kind === 'unified';
     card.append(el('strong', w.name), el('span', w.status, 'badge'));
     const tasks = activity.active_tasks.filter(t => t.worker_id === w.id);
@@ -193,8 +197,8 @@ function renderWorkers(workers, activity) {
     if (shared) card.append(el('small', '*System memory estimate, not a guaranteed GPU allocation budget. No separate GPU RAM pool.'));
     $('workers').append(card);
   }
-  if (!candidates.length) $('workers').append(el('p', 'No workers registered. Start a compatible worker.'));
-  $('online').textContent = `${candidates.filter(w => w.status !== 'OFFLINE').length} online`;
+  if (!candidates.length) $('workers').append(el('p', 'No active workers available. Start or reconnect a compatible worker.'));
+  $('online').textContent = `${candidates.length} active`;
 }
 function renderResults(data) {
   latestResult = data; $('download-result').disabled = false;
