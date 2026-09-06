@@ -12,6 +12,7 @@ Thumbs.db
 # Common dependency and generated directories
 node_modules/
 .venv/
+.venv312/
 venv/
 __pycache__/
 *.py[cod]
