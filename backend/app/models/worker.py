@@ -26,6 +26,7 @@ class Worker(Base):
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     device_id: Mapped[UUID | None] = mapped_column(unique=True)
+    location: Mapped[dict | None] = mapped_column(JSONB)
     name: Mapped[str] = mapped_column(Text)
     hostname: Mapped[str] = mapped_column(Text)
     cpu: Mapped[str] = mapped_column(Text)

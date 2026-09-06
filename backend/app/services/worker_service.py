@@ -50,6 +50,12 @@ def register_worker(db, payload: WorkerRegisterRequest):
 
 def list_workers(db, timeout, limit, offset, include_history=False):
     now = db.scalar(select(func.clock_timestamp()))
+    query = visible_workers(now, timeout, include_history)
+    workers = db.scalars(query.order_by(Worker.created_at.desc(), Worker.id).limit(limit).offset(offset))
+    return [describe_worker(worker, now, timeout) for worker in workers]
+
+
+def visible_workers(now, timeout, include_history=False):
     query = select(Worker)
     if not include_history:
         newer = aliased(Worker)
@@ -64,5 +70,4 @@ def list_workers(db, timeout, limit, offset, include_history=False):
         # Suppress only superseded OFFLINE legacy rows; their history remains queryable.
         query = query.where(or_(Worker.device_id.is_not(None),
             Worker.last_heartbeat >= now - timedelta(seconds=timeout), ~replacement))
-    workers = db.scalars(query.order_by(Worker.created_at.desc(), Worker.id).limit(limit).offset(offset))
-    return [describe_worker(worker, now, timeout) for worker in workers]
+    return query

@@ -95,9 +95,10 @@ def create_app(settings: Settings | None = None):
         with app.state.sessions() as db:
             db.execute(text('SELECT 1'))
             db.execute(text('SELECT id, device_id, ram_available_gb, gpu_core_count, gpu_memory_kind, gpu_available_gb, gpu_model_memory_gb FROM coordinator.workers LIMIT 0'))
-            db.execute(text('SELECT id, model_id, model_revision FROM coordinator.jobs LIMIT 0'))
+            db.execute(text('SELECT id, model_id, model_revision, target_worker_id FROM coordinator.jobs LIMIT 0'))
+            db.execute(text('SELECT location FROM coordinator.workers LIMIT 0'))
             db.execute(text('SELECT id, last_error FROM coordinator.tasks LIMIT 0'))
-            db.execute(text('SELECT task_id FROM coordinator.task_results LIMIT 0'))
+            db.execute(text('SELECT task_id, inference_metrics FROM coordinator.task_results LIMIT 0'))
         return {'status': 'ok', 'database': 'ok'}
 
     demo_directory = Path(__file__).resolve().parents[1] / 'demo'

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, Integer, Text, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.database import Base
 
@@ -15,6 +15,7 @@ class Job(Base):
         {'schema': 'coordinator'},
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    target_worker_id: Mapped[UUID | None] = mapped_column(ForeignKey('coordinator.workers.id'), index=True)
     task_type: Mapped[str] = mapped_column(Text)
     model_id: Mapped[str | None] = mapped_column(Text)
     model_revision: Mapped[str | None] = mapped_column(Text)

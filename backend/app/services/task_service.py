@@ -47,6 +47,7 @@ def complete_task(db, task_id, payload):
         if any(not isinstance(item, expected_type) for item in payload.results):
             raise HTTPException(422, 'Result format does not match the job task type')
         db.add(TaskResult(task_id=task.id, worker_id=worker.id,
+                          inference_metrics=payload.inference_metrics.model_dump() if payload.inference_metrics else None,
                           result=[p.model_dump() for p in payload.results], execution_time_ms=payload.execution_time_ms))
         task.status = 'COMPLETED'
         task.completed_at = now
@@ -135,6 +136,7 @@ def job_results(db, job_id):
         details = [TaskDetail(task_id=t.id, input_start_index=t.start_index, input_count=t.input_count,
                               status=t.status, worker_id=t.assigned_worker_id,
                               worker_name=names.get(t.assigned_worker_id), attempt_count=t.attempt_count,
+                              inference_metrics=r.inference_metrics if r else None,
                               execution_time_ms=r.execution_time_ms if r else None) for t, r in rows]
         predictions = [p for task, result in rows if result for p in result.result]
         failures = [FailedTask(task_id=t.id, input_start_index=t.start_index, input_count=t.input_count,

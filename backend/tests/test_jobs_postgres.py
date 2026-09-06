@@ -40,6 +40,7 @@ def connection():
             migration.op=SimpleNamespace(execute=lambda sql: conn.execute(text(sql.replace('coordinator.',schema+'.'))))
             migration.upgrade()
             conn.execute(text(f'ALTER TABLE {schema}.jobs ADD COLUMN model_id TEXT, ADD COLUMN model_revision TEXT'))
+            conn.execute(text(f'ALTER TABLE {schema}.jobs ADD COLUMN target_worker_id UUID REFERENCES {schema}.workers(id)'))
             conn.execute(text(f'ALTER TABLE {schema}.tasks ADD COLUMN last_error JSONB'))
             yield mapped
         finally:
