@@ -3,6 +3,7 @@ from fastapi import HTTPException
 from sqlalchemy import select, func
 from app.models import Worker, Task, Job, TaskResult
 from app.schemas.task import TaskMutationResponse, JobResultResponse, FailedTask, GeneratedText, Prediction, TaskDetail, ExtractionResult
+from app.services.provider import finish_attempt
 
 ACTIVE = ['ASSIGNED', 'RUNNING']
 
@@ -46,10 +47,14 @@ def complete_task(db, task_id, payload):
         expected_type = {'sentiment-classification': Prediction, 'information-extraction': ExtractionResult}.get(job.task_type, GeneratedText)
         if any(not isinstance(item, expected_type) for item in payload.results):
             raise HTTPException(422, 'Result format does not match the job task type')
+        finish_attempt(db, task, worker, now, 'COMPLETED', payload.execution_time_ms)
         db.add(TaskResult(task_id=task.id, worker_id=worker.id,
                           inference_metrics=payload.inference_metrics.model_dump() if payload.inference_metrics else None,
                           result=[p.model_dump() for p in payload.results], execution_time_ms=payload.execution_time_ms))
         task.status = 'COMPLETED'
+        if job.owner_account_id is not None:
+            from app.services.credits import settle_task
+            settle_task(db, task, job, worker)
         task.completed_at = now
         worker.active_tasks = max(0, worker.active_tasks - 1)
         job.completed_tasks += 1
@@ -59,6 +64,7 @@ def complete_task(db, task_id, payload):
 
 def release_task(db, worker, task, now, code, message):
     job = db.scalar(select(Job).where(Job.id == task.job_id).with_for_update())
+    finish_attempt(db, task, worker, now, 'EXPIRED' if code == 'ASSIGNMENT_EXPIRED' else 'FAILED')
     task.last_error = {'code': code, 'message': message,
                        'assignment_id': str(task.assignment_id), 'worker_id': str(worker.id)}
     task.assigned_worker_id = None
@@ -67,6 +73,9 @@ def release_task(db, worker, task, now, code, message):
     worker.active_tasks = max(0, worker.active_tasks - 1)
     if task.attempt_count >= 3:
         task.status = 'FAILED'
+        if job.owner_account_id is not None:
+            from app.services.credits import refund_task
+            refund_task(db, task, job)
         task.completed_at = now
         job.failed_tasks += 1
         finalize_job(job, now)

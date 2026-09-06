@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.db.database import make_engine
 from app.main import create_app
-from app.models import Job, Task, Worker
+from app.models import Account, Job, Task, Worker
 from app.schemas.job import JobCreateRequest
 from app.services.job_service import create_job
 
@@ -33,6 +33,7 @@ def connection():
         try:
             conn.execute(text(f'CREATE SCHEMA {schema}'))
             mapped=conn.execution_options(schema_translate_map={'coordinator':schema})
+            Account.__table__.create(mapped)
             Worker.__table__.create(mapped)
             path=Path(__file__).resolve().parents[1]/'migrations/versions/1781ed678f6b_add_jobs_and_queued_tasks.py'
             spec=importlib.util.spec_from_file_location('job_migration_test',path)
@@ -41,7 +42,9 @@ def connection():
             migration.upgrade()
             conn.execute(text(f'ALTER TABLE {schema}.jobs ADD COLUMN model_id TEXT, ADD COLUMN model_revision TEXT'))
             conn.execute(text(f'ALTER TABLE {schema}.jobs ADD COLUMN target_worker_id UUID REFERENCES {schema}.workers(id)'))
+            conn.execute(text(f'ALTER TABLE {schema}.jobs ADD COLUMN owner_account_id UUID REFERENCES {schema}.accounts(id)'))
             conn.execute(text(f'ALTER TABLE {schema}.tasks ADD COLUMN last_error JSONB'))
+            conn.execute(text(f"ALTER TABLE {schema}.tasks ADD COLUMN model_slot TEXT NOT NULL DEFAULT ''"))
             yield mapped
         finally:
             transaction.rollback()

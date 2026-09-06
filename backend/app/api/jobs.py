@@ -1,8 +1,10 @@
 import logging
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, Request
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.db.database import get_db
+from app.core.security import require_account, authorize_job, owner_filter
 from app.models import Job
 from app.schemas.job import JobCreateRequest, JobCreateResponse, JobResponse
 from app.services import job_service
@@ -16,21 +18,28 @@ logger = logging.getLogger(__name__)
 
 @router.post('', status_code=201, response_model=JobCreateResponse)
 def create_job(payload: JobCreateRequest, response: Response, request: Request, db: Session = Depends(get_db)):
+    principal = require_account(request)
     model_id, revision = select_model(payload, request.app.state.settings)
     job = job_service.create_job(db, payload, model_id, revision,
-                                request.app.state.settings.worker_timeout_seconds)
+                                request.app.state.settings.worker_timeout_seconds, owner_account_id=principal.account_id)
     response.headers['Location'] = f'/api/jobs/{job.id}'
     logger.info('Job created: %s (%s tasks)', job.id, job.total_tasks)
     return JobCreateResponse(job_id=job.id, total_inputs=job.total_inputs, total_tasks=job.total_tasks)
 
 
 @router.get('', response_model=list[JobResponse])
-def list_jobs(limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), db: Session = Depends(get_db)):
-    return job_service.list_jobs(db, limit, offset)
+def list_jobs(request: Request, limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), db: Session = Depends(get_db)):
+    owner_id = owner_filter(require_account(request))
+    if owner_id is None:
+        return job_service.list_jobs(db, limit, offset)
+    jobs = db.scalars(select(Job).where(Job.owner_account_id == owner_id)
+        .order_by(Job.created_at.desc(), Job.id).limit(limit).offset(offset))
+    return [job_service.describe_job(job) for job in jobs]
 
 
 @router.get('/{job_id}', response_model=JobResponse)
-def get_job(job_id: UUID, db: Session = Depends(get_db)):
+def get_job(job_id: UUID, request: Request, db: Session = Depends(get_db)):
+    authorize_job(request, job_id)
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(404, 'Job not found')
@@ -38,5 +47,6 @@ def get_job(job_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.get('/{job_id}/results', response_model=JobResultResponse)
-def results(job_id: UUID, db: Session = Depends(get_db)):
+def results(job_id: UUID, request: Request, db: Session = Depends(get_db)):
+    authorize_job(request, job_id)
     return job_results(db, job_id)

@@ -98,6 +98,7 @@ class HeartbeatResponse(BaseModel):
 
 
 class WorkerResponse(WorkerRegisterRequest):
+    owner_account_id: UUID | None = None
     id: UUID
     status: Literal['AVAILABLE', 'BUSY', 'OFFLINE']
     ram_available_gb: float | None = None

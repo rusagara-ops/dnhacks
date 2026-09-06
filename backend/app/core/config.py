@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,6 +17,7 @@ class Settings(BaseSettings):
     recovery_interval_seconds: int = Field(default=5, ge=1, le=60)
     task_lease_seconds: int = Field(default=300, ge=30, le=3600)
     database_url: SecretStr | None = None
+    auth_mode: Literal['demo', 'controlled'] = 'demo'
     api_token: SecretStr | None = None
     cors_origins: list[str] = ['http://localhost:5173', 'http://127.0.0.1:5173']
     heartbeat_interval_seconds: int = Field(default=5, ge=1)

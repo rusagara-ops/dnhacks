@@ -1,14 +1,12 @@
 from contextlib import asynccontextmanager
 import asyncio
 import logging
-import secrets
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -19,22 +17,19 @@ from app.api.tasks import router as tasks_router
 from app.api.stats import router as stats_router
 from app.api.activity import router as activity_router
 from app.api.connection import router as connection_router
+from app.api.accounts import router as accounts_router
+from app.core.security import authenticate, validate_database_auth_mode
 from app.services.recovery import recover_expired
 from app.core.config import Settings
+from app.api.provider import router as provider_router
+from app.api.credits import router as credits_router
 from app.db.database import make_engine, make_sessions
 
 logger = logging.getLogger(__name__)
 
 
-bearer = HTTPBearer(auto_error=False)
-
-
-def require_token(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
-    expected = request.app.state.settings.api_token
-    if expected and not secrets.compare_digest(
-        credentials.credentials if credentials else '', expected.get_secret_value()
-    ):
-        raise HTTPException(401, 'Invalid API token', headers={'WWW-Authenticate': 'Bearer'})
+# Kept as an import-compatible alias for existing integrations.
+require_token = authenticate
 
 
 def create_app(settings: Settings | None = None):
@@ -43,6 +38,12 @@ def create_app(settings: Settings | None = None):
     @asynccontextmanager
     async def lifespan(app):
         engine = make_engine(settings.database_url.get_secret_value()) if settings.database_url else None
+        if engine:
+            try:
+                validate_database_auth_mode(engine, settings)
+            except Exception:
+                engine.dispose()
+                raise
         app.state.sessions = make_sessions(engine) if engine else None
         stop = asyncio.Event()
         def sweep():
@@ -72,6 +73,17 @@ def create_app(settings: Settings | None = None):
     app.state.sessions = None
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
                        allow_methods=['GET', 'POST'], allow_headers=['Content-Type', 'Authorization'])
+
+    @app.middleware('http')
+    async def private_api_responses(request: Request, call_next):
+        response = await call_next(request)
+        if settings.auth_mode == 'controlled' and request.url.path.startswith('/api/'):
+            # Includes authorization errors and one-time credentials. Do not let
+            # browser/proxy caches retain private jobs, results, or account data.
+            response.headers['Cache-Control'] = 'no-store'
+        return response
+
+    app.include_router(accounts_router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(connection_router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(activity_router, prefix='/api', dependencies=[Depends(require_token)])
@@ -79,6 +91,8 @@ def create_app(settings: Settings | None = None):
     app.include_router(tasks_router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(models_router, prefix='/api', dependencies=[Depends(require_token)])
     app.include_router(jobs_router, prefix='/api', dependencies=[Depends(require_token)])
+    app.include_router(provider_router, prefix='/api', dependencies=[Depends(require_token)])
+    app.include_router(credits_router, prefix='/api', dependencies=[Depends(require_token)])
 
     @app.exception_handler(SQLAlchemyError)
     async def database_error(request, exc):
@@ -101,6 +115,9 @@ def create_app(settings: Settings | None = None):
             db.execute(text('SELECT location, models FROM coordinator.workers LIMIT 0'))
             db.execute(text('SELECT id, last_error, model_slot FROM coordinator.tasks LIMIT 0'))
             db.execute(text('SELECT task_id, inference_metrics FROM coordinator.task_results LIMIT 0'))
+            db.execute(text('SELECT owner_account_id FROM coordinator.jobs LIMIT 0'))
+            db.execute(text('SELECT account_id FROM coordinator.wallets LIMIT 0'))
+            db.execute(text('SELECT worker_id FROM coordinator.provider_policies LIMIT 0'))
         return {'status': 'ok', 'database': 'ok'}
 
     demo_directory = Path(__file__).resolve().parents[2] / 'frontend' / 'demo'

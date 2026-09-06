@@ -15,6 +15,7 @@ class Job(Base):
         {'schema': 'coordinator'},
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    owner_account_id: Mapped[UUID | None] = mapped_column(ForeignKey('coordinator.accounts.id'), index=True)
     target_worker_id: Mapped[UUID | None] = mapped_column(ForeignKey('coordinator.workers.id'), index=True)
     task_type: Mapped[str] = mapped_column(Text)
     model_id: Mapped[str | None] = mapped_column(Text)

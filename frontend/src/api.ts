@@ -1,4 +1,6 @@
 export type Connection = { url: string; token: string };
+export type Identity = {account_id: string | null; name: string; role: string; auth_mode: 'demo' | 'controlled'; credential_kind: 'demo' | 'bootstrap' | 'account' | 'worker'};
+export type CreditQuote = {total_inputs: number; credits: number; unit: string; pricing_version: string};
 export type Job = {
   id: string; task_type: string; status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
   total_inputs: number; total_tasks: number; completed_tasks: number; failed_tasks: number;
@@ -33,8 +35,9 @@ export async function request<T>(connection: Connection, path: string, init: Req
     });
   } catch { throw new Error('Cannot reach the backend. Check the URL, network, and backend CORS settings.'); }
   if (!response.ok) {
-    const messages: Record<number, string> = {401: 'Authentication failed. Check the shared demo token.', 404: 'This job or endpoint was not found.', 422: 'The backend rejected the request. Check the input limits.', 503: 'Backend not ready. Ask Abel to check database, migrations, and model configuration.'};
-    throw new ApiError(messages[response.status] ?? `Backend request failed (${response.status}).`, response.status);
+    const details = await response.json().catch(() => ({}));
+    const messages: Record<number, string> = {401: 'Authentication failed. Check your account or demo token.', 402: 'Not enough demo credits. Ask an administrator for credits or wait for reserved work to settle.', 403: 'This credential cannot access this operation. Use an account token in the dashboard.', 404: 'This job or endpoint was not found.', 422: 'The backend rejected the request. Check the input limits.', 503: 'Backend not ready. Ask Abel to check database, migrations, and model configuration.'};
+    throw new ApiError(typeof details.detail === 'string' ? details.detail : messages[response.status] ?? `Backend request failed (${response.status}).`, response.status);
   }
   return response.json() as Promise<T>;
 }

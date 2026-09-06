@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from app.db.database import get_db
+from app.core.security import require_account, owner_filter
 from app.models import Worker, Job, Task, TaskResult
 
 router = APIRouter(tags=['stats'])
@@ -21,23 +22,27 @@ class StatsResponse(BaseModel):
     total_inferences: int
 
 
-def get_stats(db, timeout):
+def get_stats(db, timeout, owner_id=None):
     online = Worker.last_heartbeat >= func.statement_timestamp() - timedelta(seconds=timeout)
     def count(model, *conditions):
         return select(func.count()).select_from(model).where(*conditions).scalar_subquery()
+    job_scope = [] if owner_id is None else [Job.owner_account_id == owner_id]
+    owned_jobs = select(Job.id).where(*job_scope)
+    task_scope = [] if owner_id is None else [Task.job_id.in_(owned_jobs)]
+    result_scope = [] if owner_id is None else [TaskResult.task_id.in_(select(Task.id).where(*task_scope))]
     # One SQL statement provides a consistent snapshot of all dashboard counters.
     query = select(
         count(Worker, online).label('workers_online'),
         count(Worker, online, Worker.active_tasks == 0).label('workers_available'),
         count(Worker, online, Worker.active_tasks > 0).label('workers_busy'),
-        *[count(Job, Job.status == status).label('jobs_' + status.lower())
+        *[count(Job, Job.status == status, *job_scope).label('jobs_' + status.lower())
           for status in ['QUEUED', 'RUNNING', 'COMPLETED', 'FAILED']],
-        count(Task, Task.status == 'COMPLETED').label('tasks_completed'),
-        select(func.coalesce(func.sum(func.jsonb_array_length(TaskResult.result)), 0)).scalar_subquery().label('total_inferences'),
+        count(Task, Task.status == 'COMPLETED', *task_scope).label('tasks_completed'),
+        select(func.coalesce(func.sum(func.jsonb_array_length(TaskResult.result)), 0)).where(*result_scope).scalar_subquery().label('total_inferences'),
     )
     return StatsResponse(**db.execute(query).mappings().one())
 
 
 @router.get('/stats', response_model=StatsResponse)
 def stats(request: Request, db: Session = Depends(get_db)):
-    return get_stats(db, request.app.state.settings.worker_timeout_seconds)
+    return get_stats(db, request.app.state.settings.worker_timeout_seconds, owner_filter(require_account(request)))

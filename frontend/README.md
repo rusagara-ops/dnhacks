@@ -2,6 +2,7 @@
 
 - **Demo dashboard:** [`demo/index.html`](demo/index.html), served by the coordinator at `http://localhost:8000/demo/`. This is the dashboard with the compute map, machine cards, and model selector. Edit `demo/app.js`, `demo/locations.js`, and `demo/style.css`. Start the coordinator from `backend/`; this dashboard calls the API on the same origin and needs no separate frontend server.
 - **Ronald’s React dashboard:** `src/`, served by Vite at `http://localhost:5173/`. Its setup instructions follow.
+- **Sharing and credits:** [`demo/sharing.html`](demo/sharing.html), served at `/demo/sharing.html` on the coordinator and linked from both dashboards. No frontend build or separate server is needed for this page.
 
 The demo lives entirely under `frontend/demo/`; the backend only mounts its static files. The public `/demo/` URL is unchanged.
 
@@ -18,6 +19,20 @@ npm run dev
 Open the URL printed by Vite (normally http://localhost:5173). Enter Abel's backend origin (`http://<ABEL_LAN_IP>:8000`) and shared demo token, then Connect. Abel must include this frontend origin in backend `CORS_ORIGINS`.
 
 Connection settings stay in memory by default. The explicit remember checkbox saves them in sessionStorage for this tab after a successful connection. Unchecking removes saved settings; Disconnect clears the token and loaded backend data. No database credentials belong in this application. The shared token is visible to the browser user.
+
+In `AUTH_MODE=controlled`, connect with an **account token**, not a worker credential. Remembering tokens is disabled and any old remembered token is removed after connecting. Both job dashboards first show the server's demo-credit quote; a second click confirms the reservation and submission. Changing an input requires a new quote. Ordinary demo mode remains unmetered and retains its existing submission flow. A `/api/me` 404 is treated as an older demo backend; other authentication errors are not ignored.
+
+## Sharing dashboard
+
+Open `/demo/sharing.html` on Abel's coordinator. This page never stores credentials in browser storage or transfers them from the job dashboard. Enter the account token explicitly. New account and worker credentials are masked, shown only once, and cleared when you disconnect or leave. Use trusted HTTPS to protect credentials and task data on the network.
+
+- Provider settings pause/resume **new assignments**, restrict task types, set a concurrency ceiling of one or two, and set a minimum free-RAM threshold. Existing tasks finish normally. Optional weekly windows use Monday–Sunday in **UTC**; split overnight windows at midnight, with `24:00` allowed as an end time. These settings are admission rules, not OS/GPU isolation or resource reservations.
+- Reliability displays accepted tasks, failed/expired attempts, and the worker-reported mean execution duration recorded since tracking was enabled. It is not an independent benchmark, network-latency estimate, result-quality score, or security certification.
+- Demo credits show available/reserved balances, earnings, and a paginated ledger. They have no cash value or payouts. The coordinator controls pricing, reservations, settlement, and refunds.
+- Worker access binds a new credential to the installation UUID obtained with `worker/.venv/bin/python worker/run.py --show-device-id`. A revoke requires an explicit confirmation click and blocks subsequent worker API requests. Pause and drain work first when possible.
+- Administrators enroll accounts, grant demo credits, adopt unowned idle demo workers, inspect credential metadata, and issue replacement account tokens without creating a new balance or identity. Replacement tokens do not automatically revoke previous ones. The setup token can create the first administrator; reconnect using the issued account token before operating jobs or machines.
+
+Provider controls also work in demo mode. Accounts, scoped credentials, and balances are hidden until the backend enables controlled mode. Backend ownership checks are authoritative; hiding a button does not enforce access control. Providers can still inspect the plaintext inputs their own machines process.
 
 ## Supported workflows
 
@@ -41,6 +56,8 @@ Submissions are never automatically retried. After an uncertain outcome, check r
 npm test
 npm run build
 ```
+
+The browser suite includes both dashboards and the sharing page. Install dependencies in `frontend/` and `frontend/demo/`, then run `npm test --prefix demo` from `frontend/` with Playwright Chromium installed. The React tests start an ephemeral local Vite server. Coordinator responses and map tiles are mocked; these tests do not prove distributed execution on Abel's machines.
 
 Validation tests cover Unicode/UTF-8 boundaries, document/code preservation, mandatory questions, irrelevant instruction omission, and legacy sentiment compatibility.
 

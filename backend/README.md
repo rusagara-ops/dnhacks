@@ -1,5 +1,11 @@
 # Abel — Coordinator Backend
 
+Controlled compute sharing (individual credentials, provider policies, and demo
+credits) is documented in [the rollout guide](../docs/CONTROLLED_COMPUTE.md).
+Default `AUTH_MODE=demo` keeps the existing unmetered flow. Use a separate database
+for the controlled rehearsal, migrate, and restart the backend. Both dashboards
+link to `/demo/sharing.html`; that page requires no frontend build.
+
 > This backend/worker branch excludes the demo UI. References to `/demo/` describe the companion UI on `abel-backend`; use `/docs` to inspect these APIs independently.
 
 Owner: Abel. The coordinator runs on Abel's laptop for the demo. It manages worker presence, jobs, task assignment, retries and results. Kevin's worker performs inference; Ronald's frontend calls this HTTP API. Neither teammate needs the database password.

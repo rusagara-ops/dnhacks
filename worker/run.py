@@ -14,6 +14,8 @@ from location import location_from_args
 import httpx
 
 async def run(args):
+    if getattr(args, 'scoped_credential', False) and not os.environ.get('API_TOKEN'):
+        raise RuntimeError('Set API_TOKEN privately to the credential issued for this worker installation')
     with lock_worker():
         return await run_multi(args) if len(getattr(args, 'models', [])) > 1 else await run_locked(args)
 
@@ -30,7 +32,7 @@ async def run_locked(args, model=None, registration=None, model_pool=None):
     async with httpx.AsyncClient(base_url=args.url.rstrip('/'), headers=headers, timeout=10) as client:
         if registration is None:
             response = await client.post('/api/workers/register', json={
-                'previous_device_id': previous_device_id(), 'device_id': device_id(), 'name': args.name, 'hostname': socket.gethostname(), 'cpu': platform.machine(), 'cpu_cores': os.cpu_count() or 1,
+                'previous_device_id': registration_alias(args), 'device_id': device_id(), 'name': args.name, 'hostname': socket.gethostname(), 'cpu': platform.machine(), 'cpu_cores': os.cpu_count() or 1,
                 **info, 'supported_tasks': getattr(model, 'supported_tasks', SUPPORTED_TASKS),
                 'model_id': model.model_id, 'model_revision': model.model_revision,
                 **({'location': location} if location is not None else {}),
@@ -155,7 +157,7 @@ async def run_multi(args):
     headers = {'Authorization': f'Bearer {token}'} if token else {}
     async with httpx.AsyncClient(base_url=args.url.rstrip('/'), headers=headers, timeout=10) as client:
         response = await client.post('/api/workers/register', json={
-            'previous_device_id': previous_device_id(), 'device_id': device_id(), 'name': args.name, 'hostname': socket.gethostname(),
+            'previous_device_id': registration_alias(args), 'device_id': device_id(), 'name': args.name, 'hostname': socket.gethostname(),
             'cpu': platform.machine(), 'cpu_cores': os.cpu_count() or 1, **info,
             'supported_tasks': list(dict.fromkeys(t for m in models for t in m.supported_tasks)),
             'model_id': models[0].model_id, 'model_revision': models[0].model_revision,
@@ -176,9 +178,17 @@ async def run_multi(args):
     return 0
 
 
+def registration_alias(args):
+    # Controlled enrollment binds one installation; its credential must never
+    # request migration of an older, independently owned installation alias.
+    return None if getattr(args, 'scoped_credential', False) else previous_device_id()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--models', nargs='+', choices=['gemma3:12b', 'qwen2.5-coder:3b'], default=['gemma3:12b'])
+    parser.add_argument('--scoped-credential', action='store_true', help='Use an installation-bound credential issued in controlled mode')
+    parser.add_argument('--show-device-id', action='store_true', help='Print the public enrollment ID and exit without starting the model')
     parser.add_argument('--url', default='http://127.0.0.1:8000')
     parser.add_argument('--name', default=socket.gethostname())
     parser.add_argument('--site', help='Approximate campus or city name (opt-in)')
@@ -189,6 +199,9 @@ def main():
     parser.add_argument('--idle-timeout', type=float, default=86400)
     parser.add_argument('--max-tasks', type=int, default=10000)
     args = parser.parse_args()
+    if args.show_device_id:
+        print(device_id())
+        return
     try:
         location_from_args(args)
     except ValueError as exc:

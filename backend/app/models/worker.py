@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, Float, Integer, Text, func
+from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Integer, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.database import Base
@@ -25,6 +25,7 @@ class Worker(Base):
         {'schema': 'coordinator'},
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    owner_account_id: Mapped[UUID | None] = mapped_column(ForeignKey('coordinator.accounts.id'), index=True)
     device_id: Mapped[UUID | None] = mapped_column(unique=True)
     models: Mapped[list] = mapped_column(JSONB, default=list, server_default='[]')
     location: Mapped[dict | None] = mapped_column(JSONB)
