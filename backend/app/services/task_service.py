@@ -51,7 +51,7 @@ def complete_task(db, task_id, payload):
                           result=[p.model_dump() for p in payload.results], execution_time_ms=payload.execution_time_ms))
         task.status = 'COMPLETED'
         task.completed_at = now
-        worker.active_tasks = 0
+        worker.active_tasks = max(0, worker.active_tasks - 1)
         job.completed_tasks += 1
         finalize_job(job, now)
     return TaskMutationResponse(status='completed')
@@ -64,7 +64,7 @@ def release_task(db, worker, task, now, code, message):
     task.assigned_worker_id = None
     task.assignment_id = None
     task.lease_expires_at = None
-    worker.active_tasks = 0
+    worker.active_tasks = max(0, worker.active_tasks - 1)
     if task.attempt_count >= 3:
         task.status = 'FAILED'
         task.completed_at = now
@@ -118,7 +118,12 @@ def renew_heartbeat(db, worker_id, payload, settings):
         worker.gpu_model_memory_gb = payload.gpu_model_memory_gb
         worker.cpu_utilization = payload.cpu_utilization
         worker.memory_utilization = payload.memory_utilization
-        worker.active_tasks = payload.active_tasks
+        if worker.models:
+            db.flush()
+            worker.active_tasks = db.scalar(select(func.count()).select_from(Task).where(
+                Task.assigned_worker_id == worker.id, Task.status.in_(ACTIVE)))
+        else:
+            worker.active_tasks = payload.active_tasks
         worker.last_heartbeat = now
     return expiry
 

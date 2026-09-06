@@ -1,6 +1,7 @@
 const $ = id => document.getElementById(id);
 let token = '', jobId = null, connected = false, polling = false, jobMode = 'summarization', connectionGeneration = 0, latestResult = null;
-const locations = new ComputeLocations(api, () => {});
+let latestWorkers = [], submitting = false;
+const locations = new ComputeLocations(api, () => renderModels());
 const example = `The city library is launching a three-month pilot to make its services easier to access. Starting in October, weekday closing time will move from 6 p.m. to 9 p.m. The change follows requests from residents who work during the day and need a quiet place to study in the evening.
 
 The pilot will also introduce a free digital skills workshop every Tuesday evening. Library staff will help participants use online job applications, create a basic resume, and access public services. Twelve computers will be available, and residents can reserve a place by phone or at the front desk.
@@ -23,7 +24,8 @@ function updateMode() {
   $('instruction-field').hidden = !['document-qa', 'coding-assistance'].includes(mode);
   $('instruction-label').textContent = coding ? 'What should we explain or fix? (optional)' : 'Question (required)';
 }
-$('mode').onchange = () => { updateMode(); locations.setMode($('mode').value); };
+$('mode').onchange = () => { updateMode(); $('model').value = ''; locations.modelId = ''; locations.setMode($('mode').value); renderModels(); };
+$('model').onchange = () => { locations.setModel($('model').value); renderModels(); };
 function samples() {
   const mode = $('mode').value;
   $('inputs').value = mode === 'coding-assistance' ? 'def average(values):\n    return sum(values) / len(values)\n\nprint(average([]))' : example;
@@ -58,8 +60,42 @@ function metric(card, label, value) {
   row.append(el('span', label), el('strong', value));
   card.append(row);
 }
+function workerModels(worker) {
+  return worker.models?.length ? worker.models : worker.model_id ? [{model_id: worker.model_id,
+    model_revision: worker.model_revision, supported_tasks: worker.supported_tasks}] : [];
+}
+function renderModels() {
+  const select = $('model'), previous = select.value, mode = $('mode').value;
+  const choices = new Map();
+  for (const worker of latestWorkers) {
+    if (locations.selected && locations.selected !== worker.id) continue;
+    for (const model of workerModels(worker)) {
+      if (!model.supported_tasks.includes(mode)) continue;
+      if (!choices.has(model.model_id)) choices.set(model.model_id, []);
+      if (worker.status !== 'OFFLINE') choices.get(model.model_id).push(worker.name);
+    }
+  }
+  select.replaceChildren(el('option', 'Coordinator default'));
+  select.firstChild.value = '';
+  for (const [id, names] of choices) {
+    const option = el('option', `${id} — ${names.length ? [...new Set(names)].join(', ') : 'No worker online'}`);
+    option.value = id; option.disabled = !names.length; select.append(option);
+  }
+  if (previous && !choices.has(previous)) {
+    const missing = el('option', `${previous} — Unavailable for this selection`);
+    missing.value = previous; missing.disabled = true; select.append(missing);
+  }
+  select.value = previous;
+  select.disabled = !connected;
+  const available = !previous || !!choices.get(previous)?.length;
+  $('model-help').textContent = !connected ? 'Connect to see available models.' : !available
+    ? 'The selected model is unavailable. Choose another model or use automatic worker assignment.'
+    : previous ? 'Your job will use this exact model on a compatible worker.'
+    : 'Uses the coordinator’s configured default model.';
+  $('submit').disabled = !connected || submitting || !available;
+}
 function renderWorkers(workers, activity) {
-  const candidates = workers.filter(w => w.supported_tasks.includes('summarization') && w.model_id === 'gemma3:12b');
+  const candidates = workers.filter(w => workerModels(w).some(m => m.supported_tasks.some(t => t in modes)));
   const modernHosts = new Set(candidates.filter(w => w.device_id).map(w => w.hostname));
   const seen = new Set();
   const relevant = candidates.filter(w => {
@@ -92,13 +128,11 @@ function renderWorkers(workers, activity) {
     metric(card, 'Available GPU memory', !online ? 'Offline — unavailable' : shared
       ? `${gib(w.ram_available_gb)} available in shared RAM*` : gib(w.gpu_available_gb));
     metric(card, 'Ollama GPU allocation', online ? gib(w.gpu_model_memory_gb) : 'Offline — unavailable');
-    card.append(el('small', w.model_id || 'No model'));
+    card.append(el('small', workerModels(w).map(m => m.model_id).join(' · ') || 'No model'));
     if (shared) card.append(el('small', '*System memory estimate, not a guaranteed GPU allocation budget. No separate GPU RAM pool.'));
-    const seconds = Math.max(0, Math.round((Date.now() - new Date(w.last_heartbeat).getTime()) / 1000));
-    card.append(el('small', `Last heartbeat ${seconds}s ago`));
     $('workers').append(card);
   }
-  if (!relevant.length) $('workers').append(el('p', 'No workers registered. Start the Gemma worker on Abel’s Mac.'));
+  if (!relevant.length) $('workers').append(el('p', 'No workers registered. Start a compatible worker.'));
   $('online').textContent = `${relevant.filter(w => w.status !== 'OFFLINE').length} online`;
 }
 function renderResults(data) {
@@ -167,7 +201,7 @@ async function refresh() {
   try {
     const [workers, activity, jobs] = await Promise.all([api('/workers?limit=500'), api('/activity'), api('/jobs?limit=10')]);
     if (!connected || generation !== connectionGeneration) return;
-    renderWorkers(workers, activity); renderActivity(activity, jobs);
+    latestWorkers = workers; renderModels(); renderWorkers(workers, activity); renderActivity(activity, jobs);
     await locations.refresh();
     if (!connected || generation !== connectionGeneration) return;
     if (jobId) {
@@ -196,6 +230,7 @@ $('disconnect').onclick = () => {
   locations.disconnect();
   latestResult = null; $('download-result').disabled = true;
   connectionGeneration++; connected = false; token = ''; rememberToken('');
+  latestWorkers = []; $('model').value = ''; locations.modelId = ''; renderModels();
   $('token').value = ''; $('token').type = 'password'; $('show-token').textContent = 'Show token';
   $('submit').disabled = true; $('disconnect').hidden = true; $('connection').textContent = 'Disconnected';
   for (const id of ['workers','overview','activity','history','results']) $(id).replaceChildren();
@@ -231,16 +266,16 @@ $('submit').onclick = async () => {
     $('error').textContent = 'Keep the source under 6,000 UTF-8 bytes and source plus request under 6,500. Input will not be silently truncated.';
     return;
   }
-  $('submit').disabled = true;
+  submitting = true; $('submit').disabled = true;
   $('error').textContent = '';
   try {
-    const job = await api('/jobs', { task_type: mode, inputs: [document], optimization: 'fastest', ...(locations.selected ? {target_worker_id: locations.selected} : {}), ...(instruction ? {instruction} : {}) });
+    const job = await api('/jobs', { task_type: mode, ...($('model').value ? {model_id: $('model').value} : {}), inputs: [document], optimization: 'fastest', ...(locations.selected ? {target_worker_id: locations.selected} : {}), ...(instruction ? {instruction} : {}) });
     jobId = job.job_id;
     jobMode = mode;
     $('result-title').textContent = {summarization: 'Document summary', 'document-qa': 'Answer', 'information-extraction': 'Extracted information', 'coding-assistance': 'Code assistance'}[mode];
     await refresh();
   } catch (error) { $('error').textContent = error.message; }
-  finally { $('submit').disabled = !connected; }
+  finally { submitting = false; renderModels(); }
 };
 setInterval(refresh, 2000);
 

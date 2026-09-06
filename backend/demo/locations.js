@@ -9,6 +9,7 @@ window.ComputeLocations = class {
     this.version = 0;
     this.connected = false;
     this.mode = 'summarization';
+    this.modelId = '';
     this.origin = null;
     this.locationEpoch = 0;
     this.editEpoch = 0;
@@ -47,6 +48,7 @@ window.ComputeLocations = class {
     this.render();
     this.onChange();
   }
+  setModel(modelId) { this.modelId = modelId; this.selected = ''; this.reload(); }
   setMode(mode) {
     this.mode = mode;
     this.selected = '';
@@ -99,22 +101,24 @@ window.ComputeLocations = class {
         ? 'Closest to coordinator → furthest' : 'Share location to compare distance';
     for (const item of items) {
       const w = item.worker;
+      const models = w.models?.length ? w.models : [{model_id: w.model_id, supported_tasks: w.supported_tasks}];
+      const compatible = this.modelId ? models.some(m => m.model_id === this.modelId && m.supported_tasks.includes(this.mode)) : item.compatible;
       const card = this.node('article', undefined, 'location-card' + (w.id === this.selected ? ' selected' : ''));
       const head = this.node('div', undefined, 'location-card-title');
       head.append(this.node('strong', w.name), this.node('span', w.status, 'site-status ' + w.status.toLowerCase()));
       card.append(head, this.node('p', w.location ? [w.location.site, w.location.region].filter(Boolean).join(' · ') : 'Location not shared', 'site-name'));
-      card.append(this.node('p', `${w.gpu || 'GPU not reported'} · ${w.model_id || 'No model reported'}`, 'site-hardware'));
+      card.append(this.node('p', `${w.gpu || 'GPU not reported'} · ${models.map(m => m.model_id).filter(Boolean).join(' · ') || 'No model reported'}`, 'site-hardware'));
       const revision = this.node('small', `Revision ${(w.model_revision || 'unknown').slice(0, 16)}`); revision.title = w.model_revision || ''; card.append(revision);
       const foot = this.node('div', undefined, 'location-card-title');
       foot.append(this.node('strong', item.distance_km === null ? 'Distance unavailable' : `${Math.round(item.distance_km).toLocaleString()} km away`, 'site-distance'));
       const button = this.node('button', w.id === this.selected ? 'Selected' : 'Use this worker', 'subtle');
-      button.disabled = w.status === 'OFFLINE' || !item.compatible;
+      button.disabled = w.status === 'OFFLINE' || !compatible;
       button.setAttribute('aria-label', `Use worker ${w.name}`);
       button.dataset.workerId = w.id;
       button.setAttribute('aria-pressed', String(w.id === this.selected));
       button.onclick = () => this.choose(w.id);
       foot.append(button); card.append(foot);
-      if (!item.compatible) card.append(this.node('small', 'Model revision does not match the coordinator.'));
+      if (!compatible) card.append(this.node('small', 'Worker does not support the selected model, or its revision does not match the coordinator default.'));
       else if (w.status === 'BUSY') card.append(this.node('small', 'Busy — a selected job waits for this worker.'));
       const place = this.node('button', w.location ? 'Edit map location' : 'Place this worker on map', 'subtle');
       place.setAttribute('aria-label', `Set location for ${w.name}`);

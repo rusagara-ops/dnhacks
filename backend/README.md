@@ -468,3 +468,21 @@ The map uses bundled Leaflet with OpenStreetMap tiles and supports zoom/pan. Vis
 `GET /api/connection` checks the bearer token and returns non-secret model, task-type, size-limit and heartbeat configuration. `worker/connect.py --url http://COORDINATOR:8000` prompts privately for a token and verifies the connection. Add `--start-worker --name NAME` only on the compute host. It does not persist the token or put it in command-line arguments.
 
 `TEAM_HANDOFF.md` now assigns backend/worker work to all three teammates: Abel owns coordinator lifecycle and identity; Kevin owns worker runtime/telemetry; Ronald owns backend observability and connection tooling. No frontend work is assigned.
+
+## Two models on one machine
+
+Migration `b731c5ae204f` adds `workers.models` and a per-model task slot. Apply `alembic upgrade head` before restarting the coordinator. A machine keeps its existing device/worker ID. Legacy workers still claim one task at a time; a multi-model worker may claim one task per registered model, at most two total.
+
+`GET /api/workers` now includes `models: [{model_id, model_revision, supported_tasks}]`. Empty `models` means a legacy worker using its existing top-level model fields. Models must be loaded and GPU-verified before registration. Changing the inventory while tasks are active returns 409.
+
+`POST /api/jobs` accepts optional `model_id`, for example:
+
+```json
+{"task_type":"coding-assistance","model_id":"qwen2.5-coder:3b","inputs":["def average(xs): return sum(xs)/len(xs)"],"instruction":"Explain the empty-list case."}
+```
+
+Omitting `model_id` preserves the coordinator's configured default. Explicit selection requires an online compatible worker; the job snapshots its exact digest. Conflicting online digests require selecting a worker. The existing `target_worker_id` still pins a job strictly.
+
+Workers claim with `POST /api/workers/{id}/next-task?model_id=qwen2.5-coder:3b`. Retrying a claim returns the same active assignment for that model. Heartbeats renew each assignment separately; the coordinator computes the machine's active task count from current assignments, so an idle model cannot mark the other model idle. Completion, failure and expiry release only the corresponding slot. Three exhausted attempts still produce FAILED with partial results.
+
+Frontend integration: populate model choices from each worker's `models`, filtered by supported task, and send `model_id` when submitting. The demo dashboard includes a model selector below the task selector, filters models by task and selected worker, and disables unavailable explicit selections. Model speed measurements remain informational; geographic distance does not determine model assignment.

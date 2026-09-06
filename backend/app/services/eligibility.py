@@ -3,17 +3,23 @@ from datetime import timedelta
 from app.core.model_registry import MODEL_REGISTRY
 
 
-def eligibility_reasons(worker, model_id, model_revision, task_type, now, timeout):
+def eligibility_reasons(worker, model_id, model_revision, task_type, now, timeout, active_model_ids=None):
     reasons = []
     if now - worker.last_heartbeat > timedelta(seconds=timeout):
         reasons.append('OFFLINE')
-    if worker.active_tasks:
+    inventory = getattr(worker, 'models', None) or []
+    selected = next((m for m in inventory if m['model_id'] == model_id), None)
+    busy = worker.active_tasks >= len(inventory) if inventory else bool(worker.active_tasks)
+    if inventory and active_model_ids is not None:
+        busy = busy or model_id in active_model_ids
+    if busy:
         reasons.append('BUSY')
-    if task_type not in worker.supported_tasks:
+    tasks = selected['supported_tasks'] if selected else worker.supported_tasks
+    if task_type not in tasks:
         reasons.append('TASK_UNSUPPORTED')
     if not model_id or not model_revision:
         reasons.append('JOB_MODEL_UNCONFIGURED')
-    elif (worker.model_id, worker.model_revision) != (model_id, model_revision):
+    elif ((selected['model_id'], selected['model_revision']) if selected else (worker.model_id, worker.model_revision)) != (model_id, model_revision):
         reasons.append('MODEL_MISMATCH')
     spec = MODEL_REGISTRY.get(model_id)
     # Preserve existing deployments of models that predate the registry.

@@ -1,4 +1,5 @@
 from datetime import timedelta
+from fastapi import HTTPException
 from sqlalchemy import func, select, or_, and_
 from sqlalchemy.orm import aliased
 from sqlalchemy.dialects.postgresql import insert
@@ -17,6 +18,12 @@ def describe_worker(worker, now, timeout):
 
 def register_worker(db, payload: WorkerRegisterRequest):
     values = payload.model_dump()
+    if payload.device_id is not None:
+        db.execute(select(func.pg_advisory_xact_lock(func.hashtext(str(payload.device_id)))))
+        existing = db.scalar(select(Worker).where(Worker.device_id == payload.device_id).with_for_update())
+        if existing and existing.active_tasks and (existing.models != values['models'] or
+                existing.model_id != payload.model_id or existing.model_revision != payload.model_revision):
+            raise HTTPException(409, 'Drain active assignments before changing registered models')
     # Keep a location saved through the map when an older worker restarts.
     # Explicit null still clears it; explicit startup coordinates still update it.
     if 'location' not in payload.model_fields_set:
@@ -49,7 +56,9 @@ def register_worker(db, payload: WorkerRegisterRequest):
     worker_id = db.scalar(statement.on_conflict_do_update(
         index_elements=[Worker.device_id], set_=updates).returning(Worker.id))
     db.commit()
-    return db.get(Worker, worker_id)
+    worker = db.get(Worker, worker_id)
+    db.refresh(worker)  # The upsert bypasses an instance already loaded for the reconnect check.
+    return worker
 
 
 def update_location(db, worker_id, location, timeout):

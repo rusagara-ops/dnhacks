@@ -19,6 +19,19 @@ def create_job(db, payload, model_id=None, model_revision=None, worker_timeout=1
     chunk_size = CHUNK_SIZE if payload.task_type == 'sentiment-classification' else 1
     # The job and every chunk must become visible together, or not at all.
     with db.begin():
+        if payload.model_id is not None:
+            now = db.scalar(select(func.clock_timestamp()))
+            candidates = db.scalars(select(Worker).where(Worker.last_heartbeat >= now - timedelta(seconds=worker_timeout))).all()
+            if payload.target_worker_id:
+                candidates = [w for w in candidates if w.id == payload.target_worker_id]
+            matches = [m for w in candidates for m in (w.models or [{'model_id': w.model_id, 'model_revision': w.model_revision, 'supported_tasks': w.supported_tasks}])
+                       if m['model_id'] == payload.model_id and payload.task_type in m['supported_tasks']]
+            revisions = {m['model_revision'] for m in matches}
+            if not revisions:
+                raise HTTPException(409, 'No online worker supports this model and task')
+            if len(revisions) > 1:
+                raise HTTPException(409, 'Model revisions differ; select a specific worker')
+            model_id, model_revision = payload.model_id, revisions.pop()
         if payload.target_worker_id is not None:
             worker = db.get(Worker, payload.target_worker_id)
             if worker is None:
@@ -26,7 +39,7 @@ def create_job(db, payload, model_id=None, model_revision=None, worker_timeout=1
             now = db.scalar(select(func.clock_timestamp()))
             if now - worker.last_heartbeat > timedelta(seconds=worker_timeout):
                 raise HTTPException(409, 'Selected worker is offline; choose another worker')
-            if (worker.model_id, worker.model_revision) != (model_id, model_revision) or payload.task_type not in worker.supported_tasks:
+            if not any((m['model_id'], m['model_revision']) == (model_id, model_revision) and payload.task_type in m['supported_tasks'] for m in (worker.models or [{'model_id': worker.model_id, 'model_revision': worker.model_revision, 'supported_tasks': worker.supported_tasks}])):
                 raise HTTPException(422, 'Selected worker does not support this task and model revision')
         job = Job(model_id=model_id, model_revision=model_revision, task_type=payload.task_type, optimization=payload.optimization,
                   target_worker_id=payload.target_worker_id,

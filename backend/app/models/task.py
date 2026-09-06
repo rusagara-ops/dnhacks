@@ -14,7 +14,7 @@ class Task(Base):
         CheckConstraint('start_index >= 0 AND input_count BETWEEN 1 AND 25', name='task_chunk_valid'),
         CheckConstraint('attempt_count BETWEEN 0 AND 3', name='task_attempts_valid'),
         UniqueConstraint('job_id', 'start_index', name='task_job_start_unique'),
-        Index('uq_tasks_active_worker', 'assigned_worker_id', unique=True, postgresql_where=text("status IN ('ASSIGNED','RUNNING')")),
+        Index('uq_tasks_active_worker', 'assigned_worker_id', 'model_slot', unique=True, postgresql_where=text("status IN ('ASSIGNED','RUNNING')")),
         {'schema': 'coordinator'},
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -25,6 +25,7 @@ class Task(Base):
     payload: Mapped[dict] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(Text, default='QUEUED', server_default='QUEUED', index=True)
     assigned_worker_id: Mapped[UUID | None] = mapped_column(ForeignKey('coordinator.workers.id'), index=True)
+    model_slot: Mapped[str] = mapped_column(Text, default='', server_default='')
     assignment_id: Mapped[UUID | None]
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default='0')

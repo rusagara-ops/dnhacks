@@ -15,26 +15,31 @@ import httpx
 
 async def run(args):
     with lock_worker():
-        return await run_locked(args)
+        return await run_multi(args) if len(getattr(args, 'models', [])) > 1 else await run_locked(args)
 
 
-async def run_locked(args):
+async def run_locked(args, model=None, registration=None, model_pool=None):
     location = location_from_args(args)
     print('Loading pinned summarization model before registration...', flush=True)
-    model = await asyncio.to_thread(Summarizer)
+    if model is None:
+        chosen = getattr(args, 'models', ['gemma3:12b'])[0]
+        model = await asyncio.to_thread(Summarizer) if chosen == 'gemma3:12b' else await asyncio.to_thread(Summarizer, chosen)
     info = await asyncio.to_thread(hardware)
     token = os.environ.get('API_TOKEN', '')
     headers = {'Authorization': f'Bearer {token}'} if token else {}
     async with httpx.AsyncClient(base_url=args.url.rstrip('/'), headers=headers, timeout=10) as client:
-        response = await client.post('/api/workers/register', json={
-            'device_id': device_id(), 'name': args.name, 'hostname': socket.gethostname(), 'cpu': platform.machine(), 'cpu_cores': os.cpu_count() or 1,
-            **info, 'supported_tasks': SUPPORTED_TASKS,
-            'model_id': model.model_id, 'model_revision': model.model_revision,
-            **({'location': location} if location is not None else {}),
-        })
-        response.raise_for_status()
-        worker = response.json()['worker_id']
-        interval = response.json()['heartbeat_interval_seconds']
+        if registration is None:
+            response = await client.post('/api/workers/register', json={
+                'device_id': device_id(), 'name': args.name, 'hostname': socket.gethostname(), 'cpu': platform.machine(), 'cpu_cores': os.cpu_count() or 1,
+                **info, 'supported_tasks': getattr(model, 'supported_tasks', SUPPORTED_TASKS),
+                'model_id': model.model_id, 'model_revision': model.model_revision,
+                **({'location': location} if location is not None else {}),
+            })
+            response.raise_for_status()
+            worker = response.json()['worker_id']
+            interval = response.json()['heartbeat_interval_seconds']
+        else:
+            worker, interval = registration
         print(f'WORKER registered {worker}', flush=True)
         active = None
         lost = asyncio.Event()
@@ -43,7 +48,7 @@ async def run_locked(args):
             while True:
                 current = active
                 payload = {**memory_metrics(), 'active_tasks': int(current is not None),
-                           'gpu_model_memory_gb': await asyncio.to_thread(model.gpu_memory_gb)}
+                           'gpu_model_memory_gb': await asyncio.to_thread(gpu_allocation, model_pool or [model])}
                 if current:
                     payload.update(task_id=current['task_id'], assignment_id=current['assignment_id'])
                 try:
@@ -63,7 +68,7 @@ async def run_locked(args):
         try:
             while processed < args.max_tasks:
                 try:
-                    response = await client.post(f'/api/workers/{worker}/next-task')
+                    response = await client.post(f'/api/workers/{worker}/next-task' + (f'?model_id={model.model_id}' if registration else ''))
                     if response.status_code >= 500:
                         raise httpx.TransportError('Coordinator temporarily unavailable')
                 except httpx.TransportError:
@@ -134,8 +139,46 @@ async def run_locked(args):
         return 0
 
 
+
+def gpu_allocation(models):
+    values = [model.gpu_memory_gb() for model in models]
+    return sum(values) if all(value is not None for value in values) else None
+
+
+async def run_multi(args):
+    models = [await asyncio.to_thread(Summarizer, name) for name in args.models]
+    # Confirm loading the second model did not evict the first.
+    if not all([await asyncio.to_thread(model.gpu_memory_gb) for model in models]):
+        raise RuntimeError('Both models must remain GPU-loaded. Restart Ollama with OLLAMA_MAX_LOADED_MODELS=2.')
+    info = await asyncio.to_thread(hardware)
+    token = os.environ.get('API_TOKEN', '')
+    headers = {'Authorization': f'Bearer {token}'} if token else {}
+    async with httpx.AsyncClient(base_url=args.url.rstrip('/'), headers=headers, timeout=10) as client:
+        response = await client.post('/api/workers/register', json={
+            'device_id': device_id(), 'name': args.name, 'hostname': socket.gethostname(),
+            'cpu': platform.machine(), 'cpu_cores': os.cpu_count() or 1, **info,
+            'supported_tasks': list(dict.fromkeys(t for m in models for t in m.supported_tasks)),
+            'model_id': models[0].model_id, 'model_revision': models[0].model_revision,
+            'models': [{'model_id': m.model_id, 'model_revision': m.model_revision,
+                        'supported_tasks': m.supported_tasks} for m in models],
+            **({'location': location_from_args(args)} if location_from_args(args) is not None else {}),
+        })
+        response.raise_for_status()
+        data = response.json()
+    registration = (data['worker_id'], data['heartbeat_interval_seconds'])
+    lanes = [asyncio.create_task(run_locked(args, model, registration, models)) for model in models]
+    try:
+        await asyncio.gather(*lanes)
+    finally:
+        for lane in lanes:
+            lane.cancel()
+        await asyncio.gather(*lanes, return_exceptions=True)
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--models', nargs='+', choices=['gemma3:12b', 'qwen2.5-coder:3b'], default=['gemma3:12b'])
     parser.add_argument('--url', default='http://127.0.0.1:8000')
     parser.add_argument('--name', default=socket.gethostname())
     parser.add_argument('--site', help='Approximate campus or city name (opt-in)')
@@ -150,6 +193,8 @@ def main():
         location_from_args(args)
     except ValueError as exc:
         parser.error(str(exc))
+    if len(set(args.models)) != len(args.models):
+        parser.error('Choose each model once')
     if min(args.poll_seconds,args.idle_timeout) <= 0 or args.max_tasks < 1:
         parser.error('Durations and max-tasks must be positive')
     try:

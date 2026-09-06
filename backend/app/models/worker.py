@@ -21,11 +21,12 @@ class Worker(Base):
         CheckConstraint('benchmark_score > 0', name='worker_benchmark_positive'),
         CheckConstraint('cpu_utilization BETWEEN 0 AND 100', name='worker_cpu_utilization_range'),
         CheckConstraint('memory_utilization BETWEEN 0 AND 100', name='worker_memory_utilization_range'),
-        CheckConstraint('active_tasks BETWEEN 0 AND 1', name='worker_single_task'),
+        CheckConstraint('active_tasks BETWEEN 0 AND 2', name='worker_single_task'),
         {'schema': 'coordinator'},
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     device_id: Mapped[UUID | None] = mapped_column(unique=True)
+    models: Mapped[list] = mapped_column(JSONB, default=list, server_default='[]')
     location: Mapped[dict | None] = mapped_column(JSONB)
     name: Mapped[str] = mapped_column(Text)
     hostname: Mapped[str] = mapped_column(Text)

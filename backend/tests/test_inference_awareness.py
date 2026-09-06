@@ -61,3 +61,20 @@ def test_model_catalog_uses_demo_auth_and_reports_configuration():
         assert len(configured) == 1
         assert configured[0]['model_id'] == 'simulation/ui'
         assert configured[0]['model_revision'] == 'v1'
+
+
+def test_selected_model_eligibility_preserves_other_free_slot():
+    inventory = [{'model_id': m, 'model_revision': 'digest', 'supported_tasks': ['coding-assistance']}
+                 for m in ['gemma3:12b', 'qwen2.5-coder:3b']]
+    w = worker(models=inventory, active_tasks=1)
+    args = (w, 'qwen2.5-coder:3b', 'digest', 'coding-assistance', NOW, 15)
+    assert eligibility_reasons(*args, active_model_ids={'gemma3:12b'}) == []
+    assert eligibility_reasons(*args, active_model_ids={'qwen2.5-coder:3b'}) == ['BUSY']
+    w.ram_available_gb = .5
+    assert 'FREE_RAM_INSUFFICIENT' in eligibility_reasons(*args, active_model_ids={'gemma3:12b'})
+
+
+def test_qwen_selection_does_not_inherit_gemma_digest():
+    settings = Settings(_env_file=None, inference_model_id='gemma3:12b', inference_model_revision='gemma-digest')
+    payload = JobCreateRequest(task_type='coding-assistance', inputs=['print(1)'], model_id='qwen2.5-coder:3b')
+    assert select_model(payload, settings) == ('qwen2.5-coder:3b', None)

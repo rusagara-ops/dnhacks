@@ -62,5 +62,5 @@ def set_location(worker_id: UUID, payload: WorkerLocationUpdate, request: Reques
 
 
 @router.post('/{worker_id}/next-task', response_model=NextTaskResponse)
-def next_task(worker_id: UUID, request: Request, db: Session = Depends(get_db)):
-    return get_next_task(db, worker_id, request.app.state.settings)
+def next_task(worker_id: UUID, request: Request, model_id: str | None = Query(None, min_length=1, max_length=200), db: Session = Depends(get_db)):
+    return get_next_task(db, worker_id, request.app.state.settings, model_id)
