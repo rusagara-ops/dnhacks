@@ -33,9 +33,11 @@ def test_concurrent_reconnect_reuses_worker(factory):
     from test_lifecycle_postgres import finish
     assert finish(factory,ids[0],assigned)=='completed'
     with factory() as db:
-        metrics=activity(db)['worker_metrics'][0]
+        data=activity(db)
+        metrics=data['worker_metrics'][0]
         assert metrics['completed_tasks']==1 and metrics['completed_inputs']==25
         assert metrics['average_execution_ms']==12
+        assert data['worker_task_types']==[{'worker_id':ids[0], 'task_type':'sentiment-classification', 'completed_tasks':1}]
 
 
 def test_same_name_different_devices_stay_separate(factory):
