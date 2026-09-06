@@ -4,7 +4,7 @@ Initial feature: PR #7. Interactive map follow-up: `kevin/interactive-compute-ma
 
 Users can inspect registered GPU hosts by campus/city, see GPUs ordered closest to furthest from the coordinator, inspect the installed model and revision, and submit a job to a chosen worker. The coordinator enforces the choice. Existing jobs without a selection continue to use the existing pull scheduler.
 
-The UI lives in `backend/demo/`, the repository's working frontend; `frontend/` is currently a placeholder. The inspiration is the [NRP site map](https://dash.nrp-nautilus.io/), but this feature lists only this coordinator's registered workers. It does not claim access to NRP resources or populate fictitious university GPUs.
+The UI lives in `frontend/demo/`, the repository's working frontend; `frontend/` is currently a placeholder. The inspiration is the [NRP site map](https://dash.nrp-nautilus.io/), but this feature lists only this coordinator's registered workers. It does not claim access to NRP resources or populate fictitious university GPUs.
 
 ## Shared API contract for Abel and Ronald to review
 
@@ -72,7 +72,7 @@ Browser geolocation requires a secure context. `http://localhost` and loopback a
 
 Worker owners can use startup flags or **Place this worker on map** / **Edit map location**. They pan/zoom, pick a point, name the site, confirm ownership and save. A missing worker location stays unknown until explicitly set. User distance sorting and worker-site publication are separate actions.
 
-The map uses locally bundled **Leaflet 1.9.4**, with its BSD license in `backend/demo/vendor/leaflet/LICENSE`. Normal interactive map viewing fetches OpenStreetMap tiles for the visible viewport, with visible attribution and normal browser caching/referrer behavior. It supports zoom, pan, keyboard navigation, grouped same-site workers, popups and a fit-to-workers control. Polling does not reset a visitor's zoom. The tile provider receives ordinary map requests (including IP address and viewed tile area), but receives no coordinator token, source documents, or result payloads. Internet access is required for detailed map tiles. Tile failures show a specific message while worker cards remain usable.
+The map uses locally bundled **Leaflet 1.9.4**, with its BSD license in `frontend/demo/vendor/leaflet/LICENSE`. Normal interactive map viewing fetches OpenStreetMap tiles for the visible viewport, with visible attribution and normal browser caching/referrer behavior. It supports zoom, pan, keyboard navigation, grouped same-site workers, popups and a fit-to-workers control. Polling does not reset a visitor's zoom. The tile provider receives ordinary map requests (including IP address and viewed tile area), but receives no coordinator token, source documents, or result payloads. Internet access is required for detailed map tiles. Tile failures show a specific message while worker cards remain usable.
 
 OpenStreetMap public tiles are best-effort and governed by the [tile usage policy](https://operations.osmfoundation.org/policies/tiles/). Do not add bulk downloads or offline prefetching; choose an appropriate provider for large production traffic. Browser tests mock tile responses and never crawl the public tile service.
 
@@ -112,7 +112,7 @@ Database checks require `TEST_DATABASE_URL` pointing to a **disposable, migrated
 Browser checks use route fixtures, not a production coordinator:
 
 ```sh
-cd backend/demo
+cd frontend/demo
 npm ci
 npx playwright install chromium
 npm test

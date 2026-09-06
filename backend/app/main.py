@@ -103,7 +103,7 @@ def create_app(settings: Settings | None = None):
             db.execute(text('SELECT task_id, inference_metrics FROM coordinator.task_results LIMIT 0'))
         return {'status': 'ok', 'database': 'ok'}
 
-    demo_directory = Path(__file__).resolve().parents[1] / 'demo'
+    demo_directory = Path(__file__).resolve().parents[2] / 'frontend' / 'demo'
     if demo_directory.is_dir():
         app.mount('/demo', StaticFiles(directory=demo_directory, html=True), name='demo')
     return app

@@ -386,7 +386,7 @@ Simulator milestone verification: 36 checks passed (32 existing unit/API checks,
 
 ## Gemma remote-compute demo (abel-backend)
 
-Abel's Mac runs the coordinator and one Gemma 3 12B worker; client laptops open `/demo/` remotely. The temporary dashboard is in `backend/demo/`, separate from Ronald's `frontend/`. See `worker/README.md` for startup, model download, GPU verification, and client instructions.
+Abel's Mac runs the coordinator and one Gemma 3 12B worker; client laptops open `/demo/` remotely. The temporary dashboard is in `frontend/demo/`, separate from Ronald's `frontend/`. See `worker/README.md` for startup, model download, GPU verification, and client instructions.
 
 From `backend/`, start the coordinator with:
 

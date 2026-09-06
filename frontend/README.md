@@ -1,3 +1,10 @@
+# Frontend applications
+
+- **Demo dashboard:** [`demo/index.html`](demo/index.html), served by the coordinator at `http://localhost:8000/demo/`. This is the dashboard with the compute map, machine cards, and model selector. Edit `demo/app.js`, `demo/locations.js`, and `demo/style.css`. Start the coordinator from `backend/`; this dashboard calls the API on the same origin and needs no separate frontend server.
+- **Ronald’s React dashboard:** `src/`, served by Vite at `http://localhost:5173/`. Its setup instructions follow.
+
+The demo lives entirely under `frontend/demo/`; the backend only mounts its static files. The public `/demo/` URL is unchanged.
+
 # Ronald — Stranded Compute frontend
 
 React + TypeScript + Vite. Requires Node.js 22.18+ (or Node.js 24).
